@@ -51,7 +51,6 @@
 - **Framework**: aiogram (Telegram Bot API)
 - **Database**: SQLAlchemy + SQLite
 - **Web UI**: PyQt5
-- **Payment**: Интеграция с платежными системами
 - **Notifications**: Telegram Bot API
 
 ## 📦 Установка

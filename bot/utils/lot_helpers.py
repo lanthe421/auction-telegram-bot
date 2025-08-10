@@ -24,10 +24,11 @@ def get_current_leader(db: SessionLocal, lot_id: int) -> Tuple[str, Optional[flo
         return "—", None
 
     # Берём ставку с наибольшей суммой (и самой новой при равенстве)
+    # При равенстве сумм лидер — тот, кто сделал ставку раньше (ASC)
     top_bid: Optional[Bid] = (
         db.query(Bid)
         .filter(Bid.lot_id == lot_id)
-        .order_by(Bid.amount.desc(), Bid.created_at.desc())
+        .order_by(Bid.amount.desc(), Bid.created_at.asc())
         .first()
     )
 

@@ -266,11 +266,22 @@ async def notify_support_about_complaint(complaint: Complaint, complainant: User
 • /resolve_complaint_{complaint.id} - Разрешить жалобу
         """.strip()
 
-        # Отправляем уведомление всем службам поддержки
+        # Отправляем уведомление всем службам поддержки (с кнопкой подтверждения)
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        ack_keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Прочитал", callback_data="acknowledge")]
+            ]
+        )
+
         for support_id in SUPPORT_IDS + SUPER_ADMIN_IDS:
             try:
                 await bot.send_message(
-                    chat_id=support_id, text=support_message, parse_mode="HTML"
+                    chat_id=support_id,
+                    text=support_message,
+                    parse_mode="HTML",
+                    reply_markup=ack_keyboard,
                 )
             except Exception as e:
                 logger.error(

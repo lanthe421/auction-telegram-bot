@@ -59,10 +59,46 @@ def receive_checkin(dbapi_connection, connection_record):
 def init_db():
     """Инициализация базы данных"""
     try:
-        from database.models import Base
+        from database.models import Base, User, UserRole
 
         Base.metadata.create_all(bind=engine)
         logger.info("База данных инициализирована успешно")
+
+        # Сидинг базовых ролей: создаем по одному суперадмину и модератору, если их нет
+        db = SessionLocal()
+        try:
+            # Проверяем наличие хотя бы одного SUPER_ADMIN
+            super_admin_exists = (
+                db.query(User).filter(User.role == UserRole.SUPER_ADMIN).first()
+            )
+            if not super_admin_exists:
+                seed_sa = User(
+                    telegram_id=999000001,
+                    username="superadmin",
+                    first_name="SuperAdmin",
+                    role=UserRole.SUPER_ADMIN,
+                )
+                db.add(seed_sa)
+
+            # Проверяем наличие хотя бы одного MODERATOR
+            moderator_exists = (
+                db.query(User).filter(User.role == UserRole.MODERATOR).first()
+            )
+            if not moderator_exists:
+                seed_mod = User(
+                    telegram_id=999000002,
+                    username="moderator",
+                    first_name="Moderator",
+                    role=UserRole.MODERATOR,
+                )
+                db.add(seed_mod)
+
+            db.commit()
+        except Exception as e:
+            logger.error(f"Ошибка при создании базовых пользователей ролей: {e}")
+            db.rollback()
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Ошибка при инициализации БД: {e}")
         raise

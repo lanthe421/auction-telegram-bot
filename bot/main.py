@@ -13,7 +13,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config.logging import setup_logging
-from config.settings import BOT_TOKEN, LOG_LEVEL
+from config.settings import BOT_TOKEN
 from database.db import close_db, init_db
 from management.utils.cache_manager import start_cache_cleanup, stop_cache_cleanup
 from management.utils.image_optimizer import media_manager
@@ -22,7 +22,7 @@ from management.utils.performance_monitor import (
     stop_performance_monitoring,
 )
 
-from .handlers import admin, auction, bids, payments, support, users
+from .handlers import admin, auction, bids, payments, support
 
 # Настройка логирования
 setup_logging()
@@ -98,7 +98,6 @@ async def lifespan():
 async def register_handlers():
     """Регистрирует все хендлеры"""
     # Основные хендлеры
-    dp.include_router(users.router)
     dp.include_router(auction.router)
     dp.include_router(bids.router)
 

@@ -71,6 +71,9 @@ class User(Base):
         back_populates="complainant",
         foreign_keys="Complaint.complainant_id",
     )
+    auto_bids = relationship(
+        "AutoBid", back_populates="user", foreign_keys="AutoBid.user_id"
+    )
 
 
 class Lot(Base):
@@ -116,6 +119,9 @@ class Lot(Base):
     documents = relationship(
         "Document", back_populates="lot", foreign_keys="Document.lot_id"
     )
+    auto_bids = relationship(
+        "AutoBid", back_populates="lot", foreign_keys="AutoBid.lot_id"
+    )
 
 
 class Bid(Base):
@@ -131,6 +137,24 @@ class Bid(Base):
     # Отношения
     lot = relationship("Lot", back_populates="bids", foreign_keys=[lot_id])
     bidder = relationship("User", back_populates="bids", foreign_keys=[bidder_id])
+
+
+class AutoBid(Base):
+    """Модель для хранения автоставок пользователей на конкретные лоты"""
+
+    __tablename__ = "auto_bids"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    lot_id = Column(Integer, ForeignKey("lots.id"), nullable=False)
+    target_amount = Column(Float, nullable=False)  # Целевая сумма автоставки
+    is_active = Column(Boolean, default=True)  # Активна ли автоставка
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Отношения
+    user = relationship("User", back_populates="auto_bids", foreign_keys=[user_id])
+    lot = relationship("Lot", back_populates="auto_bids", foreign_keys=[lot_id])
 
 
 class Payment(Base):
@@ -184,8 +208,11 @@ class Complaint(Base):
 
     # Отношения
     complainant = relationship(
-        "User", back_populates="complaints", foreign_keys=[complainant_id]
+        "User",
+        foreign_keys=[complainant_id],
     )
+    target_user = relationship("User", foreign_keys=[target_user_id])
+    reviewer = relationship("User", foreign_keys=[reviewed_by])
 
 
 class Notification(Base):
@@ -200,6 +227,9 @@ class Notification(Base):
     )  # bid, auction_end, payment, etc.
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Отношения
+    user = relationship("User", foreign_keys=[user_id])
 
 
 class SupportQuestion(Base):

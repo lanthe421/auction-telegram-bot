@@ -46,6 +46,108 @@ async def check_user_banned_callback(callback: CallbackQuery) -> bool:
         db.close()
 
 
+@router.callback_query(F.data.startswith("auto_bid:"))
+@router.callback_query(F.data.startswith("change_auto_bid:"))
+async def handle_auto_bid(callback: CallbackQuery, state: FSMContext):
+    """Старт ввода суммы автоставки для конкретного лота."""
+    # Блокировки
+    if await check_user_banned_callback(callback):
+        return
+
+    db = SessionLocal()
+    try:
+        parts = callback.data.split(":")
+        lot_id = int(parts[1])
+
+        user = db.query(User).filter(User.telegram_id == callback.from_user.id).first()
+        lot = db.query(Lot).filter(Lot.id == lot_id).first()
+
+        if not user or not lot:
+            await callback.answer("❌ Лот или пользователь не найден")
+            return
+
+        # Проверяем активность лота
+        if lot.status != LotStatus.ACTIVE or (
+            lot.end_time is not None
+            and lot.end_time <= get_moscow_time().replace(tzinfo=None)
+        ):
+            await callback.answer("❌ Аукцион завершен")
+            return
+
+        # Текущая минимальная ставка по шагу
+        min_bid_amount = calculate_min_bid(lot.current_price)
+
+        # Текущий лидер
+        leader_info = get_current_leader(db, lot.id)
+        leader_text = ""
+        if leader_info and leader_info[0]:
+            if leader_info[1] is not None:
+                leader_text = f"🥇 <b>Текущий лидер:</b> {leader_info[0]} ({leader_info[1]:,.2f} ₽)\n"
+            else:
+                leader_text = f"🥇 <b>Текущий лидер:</b> {leader_info[0]}\n"
+
+        # Текущая автоставка пользователя, если есть
+        existing_auto_bid = AutoBidManager.get_user_auto_bid(user.id, lot.id)
+        existing_text = (
+            f"\n🤖 <b>Ваша текущая автоставка:</b> {existing_auto_bid.target_amount:,.2f} ₽\n"
+            if existing_auto_bid
+            else ""
+        )
+
+        text = (
+            f"🤖 <b>Автоставка</b>\n\n"
+            f"🏷️ Лот: {lot.title}\n"
+            f"💰 Текущая цена: <b>{lot.current_price:,.2f} ₽</b>\n"
+            f"📈 Минимальная следующая ставка: <b>{min_bid_amount:,.2f} ₽</b>\n"
+            f"{leader_text}"
+            f"Введите сумму автоставки, до которой система будет автоматически повышать вашу ставку."
+            f"{existing_text}"
+        )
+
+        # Сохраняем состояние и ждем ввода суммы
+        await state.update_data(lot_id=lot_id, message_id=callback.message.message_id)
+        await state.set_state(BidStates.waiting_for_max_bid_amount)
+
+        # Кнопка Назад к лоту
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        back_keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔙 Назад к лоту", callback_data=f"lot_details:{lot_id}"
+                    )
+                ]
+            ]
+        )
+
+        # Безопасное редактирование сообщения
+        try:
+            await callback.message.edit_text(
+                text, parse_mode="HTML", reply_markup=back_keyboard
+            )
+        except Exception as e:
+            if "there is no text in the message to edit" in str(e).lower():
+                try:
+                    await callback.message.edit_caption(
+                        caption=text, parse_mode="HTML", reply_markup=back_keyboard
+                    )
+                except Exception:
+                    await callback.message.answer(
+                        text, parse_mode="HTML", reply_markup=back_keyboard
+                    )
+            else:
+                raise e
+
+        await callback.answer()
+
+    except Exception as e:
+        logger.error(f"Ошибка при запуске автоставки: {e}")
+        await callback.answer("❌ Ошибка при запуске автоставки")
+    finally:
+        db.close()
+
+
 async def ensure_user_registered(message: Message) -> User:
     """Обеспечивает регистрацию пользователя в базе данных"""
     db = SessionLocal()
@@ -259,6 +361,14 @@ async def quick_bid(callback: CallbackQuery):
         lot.current_price = bid_amount_to_place
         db.commit()
 
+        # Запускаем автоставки после пользовательской ставки
+        try:
+            AutoBidManager.process_new_bid(lot_id, bid_amount_to_place, user.id)
+        except Exception as e:
+            logger.error(
+                f"Ошибка автоповышения ставок после пользовательской ставки: {e}"
+            )
+
         # Логируем успешное создание ставки
         logger.info(
             f"Ставка успешно создана: лот {lot_id}, пользователь {user.id}, сумма {bid_amount_to_place}"
@@ -270,13 +380,7 @@ async def quick_bid(callback: CallbackQuery):
                 lot_id, old_end_time, lot.end_time
             )
 
-        # Обновляем пост в канале (синхронно, без задержек)
-        try:
-            telegram_publisher_sync.update_lot_message_with_bid(lot_id)
-        except Exception as e:
-            logger.error(
-                f"Ошибка при обновлении сообщения о лоте {lot_id} в канале: {e}"
-            )
+        # Сообщение в канале обновится автоматически через AutoBidManager при значительных изменениях
 
         # Пересчитываем лидера после успешной ставки
         leader_info_after = get_current_leader(db, lot.id)
@@ -313,9 +417,15 @@ async def quick_bid(callback: CallbackQuery):
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
+                        text="✏️ Изменить автоставку",
+                        callback_data=f"change_auto_bid:{lot_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
                         text="🔙 Назад к лоту", callback_data=f"lot_details:{lot_id}"
                     )
-                ]
+                ],
             ]
         )
 
@@ -418,6 +528,7 @@ async def custom_bid(callback: CallbackQuery, state: FSMContext):
                 ]
             ]
         )
+        # Для подтверждения настройки автоставки ниже уже добавлена кнопка изменения
 
         # Безопасное редактирование сообщения (может содержать изображение)
         try:
@@ -564,6 +675,14 @@ async def process_custom_bid(message: Message, state: FSMContext):
         lot.current_price = bid_amount
         db.commit()
 
+        # Запускаем автоставки после пользовательской ставки
+        try:
+            AutoBidManager.process_new_bid(lot_id, bid_amount, user.id)
+        except Exception as e:
+            logger.error(
+                f"Ошибка автоповышения ставок после пользовательской ставки: {e}"
+            )
+
         # Логируем успешное создание ставки
         logger.info(
             f"Ставка успешно создана: лот {lot_id}, пользователь {user.id}, сумма {bid_amount}"
@@ -575,13 +694,7 @@ async def process_custom_bid(message: Message, state: FSMContext):
                 lot_id, old_end_time, lot.end_time
             )
 
-        # Обновляем пост в канале (синхронно, без задержек)
-        try:
-            telegram_publisher_sync.update_lot_message_with_bid(lot_id)
-        except Exception as e:
-            logger.error(
-                f"Ошибка при обновлении сообщения о лоте {lot_id} в канале: {e}"
-            )
+        # Сообщение в канале обновится автоматически через AutoBidManager при значительных изменениях
 
         # Пересчитываем лидера после ставки
         leader_info_after = get_current_leader(db, lot.id)
@@ -655,8 +768,8 @@ async def process_custom_bid(message: Message, state: FSMContext):
 
 
 @router.message(BidStates.waiting_for_max_bid_amount)
-async def process_max_bid_amount(message: Message, state: FSMContext):
-    """Обработка максимальной суммы для автоставки"""
+async def process_auto_bid_amount(message: Message, state: FSMContext):
+    """Обработка суммы автоставки для конкретного лота"""
     # Проверяем блокировку
     db = SessionLocal()
     try:
@@ -715,89 +828,84 @@ async def process_max_bid_amount(message: Message, state: FSMContext):
 
         # Парсим введенную сумму
         try:
-            max_bid_amount = float(message.text.replace(",", ".").replace(" ", ""))
+            target_amount = float(message.text.replace(",", ".").replace(" ", ""))
         except ValueError:
             await message.answer(
                 "❌ Неверный формат суммы. Введите число (например: 10000)"
             )
             return
 
-        # Рассчитываем минимальную ставку
-        min_bid_amount = calculate_min_bid(lot.current_price)
+        # Проверяем автоставку с уведомлениями о текущем лидере
+        check_result = AutoBidManager.check_auto_bid_with_notifications(
+            user.id, lot.id, target_amount
+        )
 
-        # Проверяем, что максимальная сумма больше минимальной ставки
-        if max_bid_amount < min_bid_amount:
-            await message.answer(
-                f"❌ Максимальная сумма должна быть больше минимальной ставки: {min_bid_amount:,.2f} ₽"
-            )
+        if not check_result["can_set"]:
+            await message.answer(f"❌ {check_result['message']}")
             return
 
-        # Получаем информацию о текущем лидере
-        leader_info = get_current_leader(db, lot.id)
+        # Получаем информацию о текущем лидере для отображения
         leader_text = ""
-        if leader_info and leader_info[0]:
-            if leader_info[1] is not None:
-                leader_text = f"🥇 <b>Текущий лидер:</b> {leader_info[0]} ({leader_info[1]:,.2f} ₽)\n"
-            else:
-                leader_text = f"🥇 <b>Текущий лидер:</b> {leader_info[0]}\n"
+        if (
+            check_result["current_leader_name"]
+            and check_result["current_leader_name"] != "Нет лидера"
+        ):
+            leader_text = f"🥇 <b>Текущий лидер:</b> {check_result['current_leader_name']} ({check_result['current_leader_amount']:,.2f} ₽)\n"
 
-        # Сохраняем максимальную сумму автоставки
-        user.max_bid_amount = max_bid_amount
-        db.commit()
+        # Устанавливаем автоставку
+        success = AutoBidManager.set_auto_bid(user.id, lot.id, target_amount)
 
-        # Формируем текст ответа
-        result_text = (
-            f"🤖 <b>Автоставка настроена!</b>\n\n"
-            f"🏷️ Лот: {lot.title}\n"
-            f"💰 Максимальная сумма: {max_bid_amount:,.2f} ₽\n"
-            f"{leader_text}"
-            f"📊 Статус: Активна\n\n"
-            f"ℹ️ Автоставка будет работать автоматически"
-        )
-
-        # Кнопка Назад к лоту
-        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-        back_keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🔙 Назад к лоту", callback_data=f"lot_details:{lot_id}"
-                    )
-                ]
-            ]
-        )
-
-        # Пытаемся отредактировать исходное сообщение (запрос автоставки)
-        if message_id:
+        if success:
+            # После установки — принудительно пересчитаем автоставки и обновим данные лота
             try:
-                await message.bot.edit_message_text(
-                    chat_id=message.chat.id,
-                    message_id=message_id,
-                    text=result_text,
-                    parse_mode="HTML",
-                    reply_markup=back_keyboard,
-                )
-                # Удаляем сообщение пользователя с введенной суммой
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
+                AutoBidManager.recalculate_auto_bids_for_lot(lot.id)
             except Exception as e:
-                logger.error(f"Ошибка при редактировании сообщения (автоставка): {e}")
-                await message.answer(
-                    result_text, parse_mode="HTML", reply_markup=back_keyboard
+                logger.error(f"Ошибка пересчета автоставок после установки: {e}")
+
+            # Обновляем объект лота и лидера из БД
+            db.refresh(lot)
+            leader_info_after = get_current_leader(db, lot.id)
+            leader_text_after = ""
+            if leader_info_after and leader_info_after[0]:
+                if leader_info_after[1] is not None:
+                    leader_text_after = f"🥇 <b>Текущий лидер:</b> {leader_info_after[0]} ({leader_info_after[1]:,.2f} ₽)\n"
+                else:
+                    leader_text_after = (
+                        f"🥇 <b>Текущий лидер:</b> {leader_info_after[0]}\n"
+                    )
+
+            # Получаем существующую автоставку для отображения
+            existing_auto_bid = AutoBidManager.get_user_auto_bid(user.id, lot.id)
+            if existing_auto_bid:
+                auto_bid_text = f"🤖 <b>Ваша автоставка:</b> {existing_auto_bid.target_amount:,.2f} ₽"
+            else:
+                auto_bid_text = (
+                    f"🤖 <b>Автоставка установлена:</b> {target_amount:,.2f} ₽"
                 )
-        else:
-            await message.answer(
-                result_text, parse_mode="HTML", reply_markup=back_keyboard
+
+            response_text = (
+                f"✅ <b>Автоставка успешно установлена!</b>\n\n"
+                f"📦 <b>Лот:</b> {lot.title}\n"
+                f"💰 <b>Текущая цена:</b> {lot.current_price:,.2f} ₽\n"
+                f"{leader_text_after}"
+                f"{auto_bid_text}\n\n"
+                f"<i>Система будет автоматически повышать вашу ставку до указанной суммы при появлении новых ставок.</i>"
             )
 
+            await message.answer(response_text, parse_mode="HTML")
+
+            # Сообщение в канале обновится автоматически через AutoBidManager
+        else:
+            await message.answer(
+                "❌ Ошибка при установке автоставки. Попробуйте еще раз."
+            )
+
+        # Очищаем состояние
         await state.clear()
 
     except Exception as e:
-        logger.error(f"Ошибка при настройке автоставки: {e}")
-        await message.answer("❌ Ошибка при настройке автоставки")
+        logger.error(f"Ошибка при обработке автоставки: {e}")
+        await message.answer("❌ Произошла ошибка при установке автоставки")
         await state.clear()
     finally:
         db.close()

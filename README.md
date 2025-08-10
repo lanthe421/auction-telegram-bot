@@ -16,6 +16,7 @@
 
 - 🛍️ Создание лотов с изображениями и файлами
 - 📊 Управление аукционами через веб-панель
+- 💳 Интеграция с платежными системами
 - 📈 Аналитика и статистика
 
 ### Для администраторов:
@@ -49,7 +50,8 @@
 - **Backend**: Python 3.8+
 - **Framework**: aiogram (Telegram Bot API)
 - **Database**: SQLAlchemy + SQLite
-- **Web UI**: PyQt5
+- **Web UI**: PyQt6
+- **Payment**: Интеграция с платежными системами
 - **Notifications**: Telegram Bot API
 
 ## 📦 Установка
@@ -159,9 +161,17 @@ MIT License - см. файл [LICENSE](LICENSE)
 
 ## 📞 Поддержка
 
-- 📧 Email: lanthe421@gmail.com
-- 💬 Telegram: @artem_smirnov52
-- 🐛 Issues: [GitHub Issues](https://github.com/lanthe421/auction-telegram-bot/issues)
+- 📧 Email: support@auction-bot.com
+- 💬 Telegram: @auction_bot_support
+- 🐛 Issues: [GitHub Issues](https://github.com/your-username/auction-bot/issues)
+
+## 🗺️ Roadmap
+
+- [ ] Интеграция с криптоплатежами
+- [ ] Мобильное приложение
+- [ ] AI для оценки лотов
+- [ ] Мультиязычность
+- [ ] API для внешних интеграций
 
 ---
 

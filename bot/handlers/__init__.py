@@ -2,7 +2,7 @@
 Модуль обработчиков Telegram бота
 """
 
-from . import admin, auction, bid_states, bids, complaints, payments, support, users
+from . import admin, auction, bid_states, bids, complaints, payments, support
 
 __all__ = [
     "admin",
@@ -12,6 +12,4 @@ __all__ = [
     "complaints",
     "payments",
     "support",
-    "users",
 ]
-

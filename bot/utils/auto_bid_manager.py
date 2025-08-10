@@ -6,365 +6,562 @@ from bot.utils.bid_calculator import calculate_min_bid
 from bot.utils.notifications import notification_service
 from bot.utils.time_utils import extend_auction_end_time, should_extend_auction
 from database.db import SessionLocal
-from database.models import Bid, Lot, LotStatus, User
+from database.models import AutoBid, Bid, Lot, LotStatus, User
 
 logger = logging.getLogger(__name__)
 
 
 class AutoBidManager:
-    """Менеджер автоматических ставок"""
+    """Менеджер автоматических ставок - новая логика"""
 
     @staticmethod
-    def process_new_bid(lot_id: int, new_bid_amount: float, new_bidder_id: int) -> None:
-        """
-        Обрабатывает новую ставку и автоматически повышает ставки других участников
-
-        Args:
-            lot_id: ID лота
-            new_bid_amount: Сумма новой ставки
-            new_bidder_id: ID участника, сделавшего ставку
-        """
+    def set_auto_bid(user_id: int, lot_id: int, target_amount: float) -> bool:
         db = SessionLocal()
         try:
-            # Получаем лот
+            user = db.query(User).filter(User.id == user_id).first()
             lot = db.query(Lot).filter(Lot.id == lot_id).first()
-            if not lot or lot.status != LotStatus.ACTIVE:
-                return
 
-            # Получаем всех участников с автоставками
-            # Исключаем тех, у кого max_bid_amount = None (отключенные автоставки)
-            auto_bid_users = (
-                db.query(User)
+            if not user or not lot:
+                logger.error(f"Пользователь {user_id} или лот {lot_id} не найден")
+                return False
+
+            if lot.status != LotStatus.ACTIVE:
+                logger.error(f"Лот {lot_id} не активен")
+                return False
+
+            if user.id == lot.seller_id:
+                logger.error(
+                    f"Пользователь {user_id} не может ставить автоставку на свой лот {lot_id}"
+                )
+                return False
+
+            if target_amount <= lot.current_price:
+                logger.error(
+                    f"Целевая сумма {target_amount} должна быть больше текущей цены {lot.current_price}"
+                )
+                return False
+
+            existing_auto_bid = (
+                db.query(AutoBid)
                 .filter(
-                    User.auto_bid_enabled == True,
-                    User.max_bid_amount.isnot(None),  # Только активные автоставки
-                    User.id != new_bidder_id,  # Исключаем того, кто сделал ставку
+                    AutoBid.user_id == user_id,
+                    AutoBid.lot_id == lot_id,
+                    AutoBid.is_active == True,
                 )
-                .all()
-            )
-
-            # Проксирование автоставок: выбираем лидера и целевую цену по правилам
-            if not auto_bid_users:
-                return
-
-            # Текущая цена и шаг
-            current_price = lot.current_price
-            min_bid_now = calculate_min_bid(current_price)
-            increment = min_bid_now - current_price
-
-            # Собираем информацию по автоставкам: (user, max_amount, last_bid_time)
-            bidders_info = []
-            for u in auto_bid_users:
-                # Пропускаем продавца на свой лот (дополнительная защита)
-                if u.id == lot.seller_id:
-                    continue
-                last_bid = (
-                    db.query(Bid)
-                    .filter(Bid.lot_id == lot.id, Bid.bidder_id == u.id)
-                    .order_by(Bid.created_at.desc())
-                    .first()
-                )
-                # Требуем, чтобы пользователь уже участвовал в этом лоте (не авто-присоединяем новых)
-                if not last_bid:
-                    continue
-                last_time = last_bid.created_at
-                bidders_info.append((u, float(u.max_bid_amount), last_time))
-
-            if not bidders_info:
-                return
-
-            # Находим максимальные лимиты
-            highest_max = max(m for _, m, _ in bidders_info)
-            if highest_max <= current_price:
-                return
-            highest_candidates = [
-                (u, m, t) for (u, m, t) in bidders_info if m == highest_max
-            ]
-
-            # Определяем второй максимум среди остальных и текущую цену
-            others_max = [m for (_, m, _) in bidders_info if m != highest_max]
-            second_max = (
-                max([current_price] + others_max)
-                if others_max
-                else max(current_price, 0)
-            )
-
-            # Лидер среди кандидатов по правилу: кто раньше (по последней ставке), затем по ID
-            highest_candidates.sort(key=lambda x: (x[2], x[0].id))
-            winner_user = highest_candidates[0][0]
-
-            # Целевая цена: не вся максимальная, а second_max + шаг, но не меньше current_price + шаг и не больше highest_max
-            target_price = max(current_price + increment, second_max + increment)
-            target_price = min(target_price, highest_max)
-
-            if target_price <= current_price:
-                return
-
-            # Определяем предыдущего лидера для уведомления
-            previous_top_bid = (
-                db.query(Bid)
-                .filter(Bid.lot_id == lot.id)
-                .order_by(Bid.amount.desc())
                 .first()
             )
 
-            # Проверяем, нужно ли продлить аукцион
-            auction_extended = False
-            old_end_time = lot.end_time
-            if lot.end_time and should_extend_auction(lot.end_time):
-                # Продлеваем аукцион на 10 минут
-                lot.end_time = extend_auction_end_time(lot.end_time)
-                auction_extended = True
+            if existing_auto_bid:
+                existing_auto_bid.target_amount = target_amount
+                existing_auto_bid.updated_at = datetime.utcnow()
                 logger.info(
-                    f"Аукцион {lot.id} автоматически продлен до {lot.end_time} (автоставка)"
+                    f"Обновлена автоставка пользователя {user_id} на лот {lot_id}: {target_amount}₽"
+                )
+            else:
+                new_auto_bid = AutoBid(
+                    user_id=user_id,
+                    lot_id=lot_id,
+                    target_amount=target_amount,
+                    is_active=True,
+                )
+                db.add(new_auto_bid)
+                logger.info(
+                    f"Создана автоставка пользователя {user_id} на лот {lot_id}: {target_amount}₽"
                 )
 
-            # Фиксируем автоставку лидера
-            new_bid = Bid(
-                lot_id=lot.id,
-                bidder_id=winner_user.id,
-                amount=target_price,
-                is_auto_bid=True,
-            )
-            db.add(new_bid)
-            lot.current_price = target_price
             db.commit()
 
-            logger.info(
-                f"Автоставка лидера user_id={winner_user.id} установлена {target_price} (лимит: {highest_max}, second_max: {second_max}, шаг: {increment})"
-            )
+            # Синхронизация текущей цены с реальным лидером (если отличается)
+                current_leader_bid = (
+                    db.query(Bid)
+                    .filter(Bid.lot_id == lot.id)
+                    .order_by(Bid.amount.desc())
+                    .first()
+                )
+            if current_leader_bid and current_leader_bid.amount != lot.current_price:
+                old_price = lot.current_price
+                lot.current_price = current_leader_bid.amount
+                db.commit()
+                logger.info(
+                    f"Синхронизирована цена лота {lot_id} после установки автоставки: {old_price}₽ → {lot.current_price}₽"
+                )
 
-            # Уведомляем о продлении аукциона, если произошло
-            if auction_extended:
-                try:
-                    import asyncio
-
-                    asyncio.create_task(
-                        notification_service.notify_auction_extended(
-                            lot.id, old_end_time, lot.end_time
-                        )
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Ошибка при уведомлении о продлении аукциона (авто): {e}"
-                    )
-
-            # Уведомляем предыдущего лидера, если изменился
-            try:
-                if previous_top_bid and previous_top_bid.bidder_id != winner_user.id:
-                    import asyncio
-
-                    asyncio.create_task(
-                        notification_service.notify_outbid(
-                            lot.id, previous_top_bid.bidder_id, target_price
-                        )
-                    )
-            except Exception as e:
-                logger.error(f"Ошибка при уведомлении о перебитой ставке (авто): {e}")
-
+            # Запускаем обработку автоставок
+            AutoBidManager._process_auto_bids_for_lot(lot_id)
+            return True
         except Exception as e:
-            logger.error(f"Ошибка при обработке автоставок для лота {lot_id}: {e}")
+            logger.error(f"Ошибка при установке автоставки: {e}")
+            db.rollback()
+            return False
         finally:
             db.close()
 
     @staticmethod
-    def _process_user_auto_bid(
-        db: SessionLocal,
-        lot: Lot,
-        user: User,
-        new_bid_amount: float,
-        new_bidder_id: int,
-    ) -> None:
-        """
-        Обрабатывает автоставку для конкретного пользователя
-
-        Args:
-            db: Сессия базы данных
-            lot: Лот
-            user: Пользователь с автоставкой
-            new_bid_amount: Сумма новой ставки
-            new_bidder_id: ID участника, сделавшего ставку
-        """
-        try:
-            # Запретить автоставку для продавца на свой лот
-            if user.id == lot.seller_id:
-                logger.warning(
-                    f"Попытка продавца (user_id={user.id}, tg_id={user.telegram_id}) использовать автоставку на свой лот (lot_id={lot.id}) через AutoBidManager"
-                )
-                return
-
-            # Получаем последнюю ставку пользователя на этот лот
-            last_user_bid = (
-                db.query(Bid)
-                .filter(Bid.lot_id == lot.id, Bid.bidder_id == user.id)
-                .order_by(Bid.created_at.desc())
-                .first()
-            )
-
-            # Определяем минимальную ставку для участия (от текущей цены лота)
-            min_required_bid = calculate_min_bid(lot.current_price)
-
-            # Если пользователь еще не делал ставки на этот лот
-            if not last_user_bid:
-                # Проверяем, стоит ли входить в торги (новая ставка + шаг должны быть меньше лимита)
-                if min_required_bid >= user.max_bid_amount:
-                    return  # Лимит автоставки слишком мал для участия
-                # Участвуем в торгах
-            else:
-                # Пользователь уже участвовал, проверяем нужно ли повышать
-                if lot.current_price <= last_user_bid.amount:
-                    return  # Текущая цена не выше нашей последней ставки
-
-            # Определяем текущего лидера до повышения автоставки (для уведомления о перебитии)
-            previous_top_bid = (
-                db.query(Bid)
-                .filter(Bid.lot_id == lot.id)
-                .order_by(Bid.amount.desc())
-                .first()
-            )
-
-            # Проверяем, нужно ли продлить аукцион
-            auction_extended = False
-            old_end_time = lot.end_time
-            if lot.end_time and should_extend_auction(lot.end_time):
-                # Продлеваем аукцион на 10 минут
-                lot.end_time = extend_auction_end_time(lot.end_time)
-                auction_extended = True
-                logger.info(
-                    f"Аукцион {lot.id} автоматически продлен до {lot.end_time} (индивидуальная автоставка)"
-                )
-
-            # Используем уже рассчитанную минимальную ставку
-            final_bid_amount = min_required_bid
-
-            # Проверяем, не превышает ли новая ставка максимальную сумму пользователя
-            if final_bid_amount > user.max_bid_amount:
-                logger.info(
-                    f"Автоставка пользователя {user.id} достигла максимума {user.max_bid_amount}"
-                )
-                return
-
-            # Создаем новую автоставку
-            new_bid = Bid(
-                lot_id=lot.id,
-                bidder_id=user.id,
-                amount=final_bid_amount,
-                is_auto_bid=True,
-            )
-            db.add(new_bid)
-
-            # Обновляем цену лота
-            lot.current_price = final_bid_amount
-
-            # Сохраняем изменения сразу
-            db.commit()
-
-            logger.info(
-                f"Автоставка пользователя {user.id} повышена до {final_bid_amount} (максимум: {user.max_bid_amount})"
-            )
-
-            # Уведомляем о продлении аукциона, если произошло
-            if auction_extended:
-                try:
-                    import asyncio
-
-                    asyncio.create_task(
-                        notification_service.notify_auction_extended(
-                            lot.id, old_end_time, lot.end_time
-                        )
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Ошибка при уведомлении о продлении аукциона (индивидуальная авто): {e}"
-                    )
-
-            # Уведомляем предыдущего лидера, если это был другой пользователь
-            try:
-                if previous_top_bid and previous_top_bid.bidder_id != user.id:
-                    # Отправляем уведомление о перебитой ставке
-                    import asyncio
-
-                    asyncio.create_task(
-                        notification_service.notify_outbid(
-                            lot.id, previous_top_bid.bidder_id, final_bid_amount
-                        )
-                    )
-            except Exception as e:
-                logger.error(f"Ошибка при уведомлении о перебитой ставке (авто): {e}")
-
-        except Exception as e:
-            logger.error(f"Ошибка при обработке автоставки пользователя {user.id}: {e}")
-
-    @staticmethod
-    def get_user_auto_bid_info(user_id: int, lot_id: int) -> Optional[dict]:
-        """
-        Получает информацию об автоставке пользователя на конкретный лот
-
-        Args:
-            user_id: ID пользователя
-            lot_id: ID лота
-
-        Returns:
-            dict: Информация об автоставке или None
-        """
+    def remove_auto_bid(user_id: int, lot_id: int) -> bool:
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user or not user.auto_bid_enabled or not user.max_bid_amount:
-                return None
+            auto_bid = (
+                db.query(AutoBid)
+                .filter(
+                    AutoBid.user_id == user_id,
+                    AutoBid.lot_id == lot_id,
+                    AutoBid.is_active == True,
+                )
+                        .first()
+                    )
 
-            # Получаем последнюю ставку пользователя на этот лот
-            last_bid = (
-                db.query(Bid)
-                .filter(Bid.lot_id == lot_id, Bid.bidder_id == user_id)
-                .order_by(Bid.created_at.desc())
-                .first()
-            )
-
-            if not last_bid:
-                return None
-
-            return {
-                "current_bid": last_bid.amount,
-                "max_amount": user.max_bid_amount,
-                "can_increase": last_bid.amount < user.max_bid_amount,
-            }
-
+            if auto_bid:
+                auto_bid.is_active = False
+                db.commit()
+                            logger.info(
+                    f"Удалена автоставка пользователя {user_id} на лот {lot_id}"
+                )
+                return True
+            else:
+                logger.warning(
+                    f"Автоставка пользователя {user_id} на лот {lot_id} не найдена"
+                )
+                return False
         except Exception as e:
-            logger.error(f"Ошибка при получении информации об автоставке: {e}")
+            logger.error(f"Ошибка при удалении автоставки: {e}")
+            db.rollback()
+            return False
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_user_auto_bid(user_id: int, lot_id: int) -> Optional[AutoBid]:
+        db = SessionLocal()
+        try:
+            return (
+                db.query(AutoBid)
+                .filter(
+                    AutoBid.user_id == user_id,
+                    AutoBid.lot_id == lot_id,
+                    AutoBid.is_active == True,
+                )
+                .first()
+                                    )
+                            except Exception as e:
+            logger.error(f"Ошибка при получении автоставки: {e}")
             return None
         finally:
             db.close()
 
     @staticmethod
-    def disable_auto_bid_for_lot(user_id: int, lot_id: int) -> bool:
-        """
-        Отключает автоставку пользователя для конкретного лота
+    def process_new_bid(lot_id: int, new_bid_amount: float, new_bidder_id: int) -> None:
+                            logger.info(
+            f"Обработка новой ставки {new_bid_amount}₽ от пользователя {new_bidder_id} на лот {lot_id}"
+        )
+        # Для совместимости и корректной реакции автоставок после ручной ставки
+        # инициируем пересчет, который при необходимости создаст недостающие AutoBid
+        AutoBidManager.recalculate_auto_bids_for_lot(lot_id)
 
-        Args:
-            user_id: ID пользователя
-            lot_id: ID лота
-
-        Returns:
-            bool: True если успешно отключено
-        """
+    @staticmethod
+    def _process_auto_bids_for_lot(lot_id: int) -> None:
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user:
+            lot = db.query(Lot).filter(Lot.id == lot_id).first()
+            if not lot or lot.status != LotStatus.ACTIVE:
+                            return
+
+            auto_bids = (
+                db.query(AutoBid)
+                .filter(AutoBid.lot_id == lot_id, AutoBid.is_active == True)
+                .all()
+            )
+
+            if not auto_bids:
+                logger.info(f"Нет активных автоставок на лот {lot_id}")
+                return
+
+            old_price = lot.current_price
+
+            # Стабилизационный цикл: повторяем, пока цена меняется
+            max_iterations = 20
+            for _ in range(max_iterations):
+                iteration_changed = False
+                for auto_bid in sorted(
+                    auto_bids, key=lambda ab: ab.target_amount, reverse=True
+                ):
+                    if AutoBidManager._process_single_auto_bid(
+                        db, lot, auto_bid, lot.current_price
+                    ):
+                        iteration_changed = True
+                if not iteration_changed:
+                    break
+
+            new_price = lot.current_price
+            if new_price != old_price and AutoBidManager._should_update_channel(
+                lot_id, old_price, new_price
+            ):
+                try:
+                    from management.core.telegram_publisher_sync import (
+                        TelegramPublisherSync,
+                    )
+
+                    TelegramPublisherSync().update_lot_message_with_bid(lot_id)
+                    logger.info(
+                        f"Обновлено сообщение в канале для лота {lot_id} (цена: {old_price}₽ → {new_price}₽)"
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка при обновлении сообщения в канале: {e}")
+            else:
+                                    logger.info(
+                    f"Канал не обновляется для лота {lot_id} (незначительное изменение цены: {old_price}₽ → {new_price}₽)"
+                                    )
+                            except Exception as e:
+            logger.error(f"Ошибка при обработке автоставок для лота {lot_id}: {e}")
+        finally:
+            db.close()
+
+    # Совместимость со старыми тестами/кодом
+    @staticmethod
+    def recalculate_auto_bids_for_lot(lot_id: int) -> None:
+        """Совместимая обертка. При необходимости создаёт AutoBid из старых полей пользователя и предыдущих авто-ставок."""
+        db = SessionLocal()
+        try:
+            lot = db.query(Lot).filter(Lot.id == lot_id).first()
+            if not lot:
+                            return
+
+            # Если на лоте нет активных AutoBid, но есть пользователи с прежними автофлагами и авто-ставками,
+            # создаём записи AutoBid на лету для совместимости.
+            has_auto = (
+                db.query(AutoBid)
+                .filter(AutoBid.lot_id == lot_id, AutoBid.is_active == True)
+                .first()
+            )
+            if not has_auto:
+                # Ищем участников с предыдущими авто-ставками
+                bidder_ids = [
+                    row[0]
+                    for row in (
+                        db.query(Bid.bidder_id)
+                        .filter(Bid.lot_id == lot_id, Bid.is_auto_bid == True)
+                        .distinct()
+                        .all()
+                    )
+                ]
+                for bidder_id in bidder_ids:
+                    user = db.query(User).filter(User.id == bidder_id).first()
+                    if not user:
+                        continue
+                    # Если есть лимит из старой модели — используем его как target_amount
+                    target = getattr(user, "max_bid_amount", None)
+                    enabled = getattr(user, "auto_bid_enabled", False)
+                    if enabled and target and target > lot.current_price:
+                        db.add(
+                            AutoBid(
+                                user_id=bidder_id,
+                                lot_id=lot_id,
+                                target_amount=float(target),
+                                is_active=True,
+                            )
+                        )
+                db.commit()
+
+        except Exception as e:
+            logger.error(f"Ошибка совместимости при создании AutoBid: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
+        # После подготовки данных запускаем основную обработку
+        AutoBidManager._process_auto_bids_for_lot(lot_id)
+
+    @staticmethod
+    def _process_single_auto_bid(
+        db: SessionLocal, lot: Lot, auto_bid: AutoBid, current_price: float
+    ) -> bool:
+        try:
+            live_current_price = lot.current_price
+
+            current_leader_bid = (
+                db.query(Bid)
+                .filter(Bid.lot_id == lot.id)
+                .order_by(Bid.amount.desc())
+                .first()
+            )
+
+            # Если пользователь уже лидер — ничего не делаем
+            if current_leader_bid and current_leader_bid.bidder_id == auto_bid.user_id:
                 return False
 
-            # Сбрасываем максимальную сумму автоставки
-            user.max_bid_amount = None
+            if auto_bid.target_amount <= live_current_price:
+                return False
+
+            # Максимальная автоставка среди других пользователей
+            max_other_auto_bid = (
+                db.query(AutoBid)
+                .filter(
+                    AutoBid.lot_id == lot.id,
+                    AutoBid.is_active == True,
+                    AutoBid.user_id != auto_bid.user_id,
+                )
+                .order_by(AutoBid.target_amount.desc())
+                .first()
+            )
+
+            if max_other_auto_bid:
+                # Новая цена = автоставка прошлого лидера + шаг
+                base_price = max_other_auto_bid.target_amount
+                required_bid = calculate_min_bid(base_price)
+
+                if auto_bid.target_amount < required_bid:
+                    return False
+                if live_current_price >= required_bid:
+                    return False
+                new_bid_amount = required_bid
+            else:
+                # Если нет других автоставок — текущая цена + шаг
+                required_bid = calculate_min_bid(live_current_price)
+                if auto_bid.target_amount < required_bid:
+                    return False
+                new_bid_amount = required_bid
+
+            # Не создаем дубль той же суммы
+            existing_bid = (
+                db.query(Bid)
+                .filter(
+                    Bid.lot_id == lot.id,
+                    Bid.bidder_id == auto_bid.user_id,
+                    Bid.amount == new_bid_amount,
+                )
+                .first()
+            )
+            if existing_bid:
+                return False
+
+            # Продлеваем аукцион при необходимости
+            auction_extended = False
+            old_end_time = lot.end_time
+            if lot.end_time and should_extend_auction(lot.end_time):
+                lot.end_time = extend_auction_end_time(lot.end_time)
+                auction_extended = True
+                logger.info(f"Аукцион {lot.id} продлен до {lot.end_time}")
+
+            # Создаем ставку
+            new_bid = Bid(
+                lot_id=lot.id,
+                bidder_id=auto_bid.user_id,
+                amount=new_bid_amount,
+                is_auto_bid=True,
+            )
+            db.add(new_bid)
+            lot.current_price = new_bid_amount
             db.commit()
 
             logger.info(
-                f"Автоставка пользователя {user_id} отключена для лота {lot_id}"
+                f"Автоставка пользователя {auto_bid.user_id}: {new_bid_amount}₽ (лимит: {auto_bid.target_amount}₽)"
             )
-            return True
 
+            # Уведомления
+            if auction_extended:
+                try:
+                    import asyncio
+
+                    asyncio.create_task(
+                        notification_service.notify_auction_extended(
+                            lot.id, old_end_time, lot.end_time
+                        )
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка при уведомлении о продлении аукциона: {e}")
+
+            if current_leader_bid and current_leader_bid.bidder_id != auto_bid.user_id:
+            try:
+                    import asyncio
+
+                    asyncio.create_task(
+                        notification_service.notify_outbid(
+                            lot.id, current_leader_bid.bidder_id, new_bid_amount
+                        )
+                    )
+            except Exception as e:
+                    logger.error(f"Ошибка при уведомлении о перебитой ставке: {e}")
+
+            return True
         except Exception as e:
-            logger.error(f"Ошибка при отключении автоставки: {e}")
+            logger.error(f"Ошибка при обработке автоставки {auto_bid.id}: {e}")
             return False
+
+    @staticmethod
+    def get_lot_auto_bids(lot_id: int) -> list:
+        db = SessionLocal()
+        try:
+            return (
+                db.query(AutoBid)
+                .filter(AutoBid.lot_id == lot_id, AutoBid.is_active == True)
+                .all()
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при получении автоставок лота {lot_id}: {e}")
+            return []
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_user_auto_bids(user_id: int) -> list:
+        db = SessionLocal()
+        try:
+            return (
+                db.query(AutoBid)
+                .filter(AutoBid.user_id == user_id, AutoBid.is_active == True)
+                .all()
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при получении автоставок пользователя {user_id}: {e}")
+            return []
+        finally:
+            db.close()
+
+    @staticmethod
+    def cleanup_expired_auto_bids() -> int:
+        db = SessionLocal()
+        try:
+            expired_auto_bids = (
+                db.query(AutoBid)
+                .join(Lot)
+                .filter(
+                    AutoBid.is_active == True,
+                    Lot.status.in_(
+                        [LotStatus.SOLD, LotStatus.CANCELLED, LotStatus.EXPIRED]
+                    ),
+                )
+                .all()
+            )
+
+            count = 0
+            for auto_bid in expired_auto_bids:
+                auto_bid.is_active = False
+                count += 1
+
+            if count > 0:
+            db.commit()
+                logger.info(f"Очищено {count} автоставок на завершенных лотах")
+
+            return count
+            except Exception as e:
+            logger.error(f"Ошибка при очистке автоставок: {e}")
+            db.rollback()
+            return 0
+        finally:
+            db.close()
+
+    @staticmethod
+    def _should_update_channel(lot_id: int, old_price: float, new_price: float) -> bool:
+        price_change = new_price - old_price
+        price_change_percent = (price_change / old_price) * 100 if old_price > 0 else 0
+        return price_change_percent >= 10 or price_change >= 1000
+
+    @staticmethod
+    def check_auto_bid_with_notifications(
+        user_id: int, lot_id: int, target_amount: float
+    ) -> dict:
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            lot = db.query(Lot).filter(Lot.id == lot_id).first()
+
+            if not user or not lot:
+                return {
+                    "can_set": False,
+                    "message": "Пользователь или лот не найден",
+                    "current_leader_amount": 0,
+                    "current_leader_name": "",
+                }
+
+            if lot.status != LotStatus.ACTIVE:
+                return {
+                    "can_set": False,
+                    "message": "Лот не активен",
+                    "current_leader_amount": 0,
+                    "current_leader_name": "",
+                }
+
+            if user.id == lot.seller_id:
+                return {
+                    "can_set": False,
+                    "message": "Вы не можете ставить автоставку на свой лот",
+                    "current_leader_amount": 0,
+                    "current_leader_name": "",
+                }
+
+            max_auto_bid = (
+                db.query(AutoBid)
+                .filter(AutoBid.lot_id == lot.id, AutoBid.is_active == True)
+                .order_by(AutoBid.target_amount.desc())
+                    .first()
+            )
+
+            current_leader_bid = (
+                db.query(Bid)
+                .filter(Bid.lot_id == lot.id)
+                .order_by(Bid.amount.desc())
+                .first()
+            )
+
+            current_leader_amount = (
+                current_leader_bid.amount if current_leader_bid else lot.current_price
+            )
+            current_leader_name = "Нет лидера"
+
+            if current_leader_bid:
+                leader_user = (
+                    db.query(User)
+                    .filter(User.id == current_leader_bid.bidder_id)
+                    .first()
+                )
+                current_leader_name = (
+                    leader_user.first_name
+                    if leader_user
+                    else f"User{current_leader_bid.bidder_id}"
+                )
+
+            if target_amount <= lot.current_price:
+                return {
+                    "can_set": False,
+                    "message": f"Целевая сумма {target_amount}₽ должна быть больше текущей цены {lot.current_price}₽",
+                    "current_leader_amount": current_leader_amount,
+                    "current_leader_name": current_leader_name,
+                }
+
+            if max_auto_bid and target_amount <= max_auto_bid.target_amount:
+                max_auto_bid_user = (
+                    db.query(User).filter(User.id == max_auto_bid.user_id).first()
+                )
+                max_auto_bid_user_name = (
+                    max_auto_bid_user.first_name
+                    if max_auto_bid_user
+                    else f"User{max_auto_bid.user_id}"
+                )
+                minimal_needed = max_auto_bid.target_amount + calculate_min_bid(
+                    max_auto_bid.target_amount
+                )
+                return {
+                    "can_set": False,
+                    "message": (
+                        f"Ваша автоставка {target_amount}₽ меньше или равна автоставке пользователя "
+                        f"{max_auto_bid_user_name} ({max_auto_bid.target_amount}₽). Минимум: {minimal_needed}₽."
+                    ),
+                    "current_leader_amount": current_leader_amount,
+                    "current_leader_name": current_leader_name,
+                }
+
+            return {
+                "can_set": True,
+                "message": f"Автоставка {target_amount}₽ будет установлена. Текущий лидер: {current_leader_name} ({current_leader_amount}₽)",
+                "current_leader_amount": current_leader_amount,
+                "current_leader_name": current_leader_name,
+            }
+        except Exception as e:
+            logger.error(f"Ошибка при проверке автоставки: {e}")
+            return {
+                "can_set": False,
+                "message": f"Ошибка при проверке автоставки: {e}",
+                "current_leader_amount": 0,
+                "current_leader_name": "",
+            }
         finally:
             db.close()

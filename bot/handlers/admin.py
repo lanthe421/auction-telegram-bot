@@ -15,14 +15,30 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
-def is_admin(user_id: int) -> bool:
-    """Проверяет, является ли пользователь администратором"""
-    return user_id in ADMIN_IDS or user_id in SUPER_ADMIN_IDS
+def _get_user_role_by_telegram_id(user_id: int) -> UserRole | None:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.telegram_id == user_id).first()
+        return user.role if user else None
+    except Exception:
+        return None
+    finally:
+        db.close()
 
 
 def is_super_admin(user_id: int) -> bool:
     """Проверяет, является ли пользователь супер-администратором"""
-    return user_id in SUPER_ADMIN_IDS
+    if user_id in SUPER_ADMIN_IDS:
+        return True
+    return _get_user_role_by_telegram_id(user_id) == UserRole.SUPER_ADMIN
+
+
+def is_admin(user_id: int) -> bool:
+    """Проверяет, является ли пользователь администратором"""
+    if user_id in ADMIN_IDS or user_id in SUPER_ADMIN_IDS:
+        return True
+    # Считаем админами тех, у кого роль SUPER_ADMIN в БД
+    return _get_user_role_by_telegram_id(user_id) in {UserRole.SUPER_ADMIN}
 
 
 # Команда /admin удалена по требованию. Доступ к админ-функциям оставлен через роль и кнопки.

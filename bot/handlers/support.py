@@ -197,11 +197,22 @@ async def notify_support_about_question(question: SupportQuestion, user: User):
 • /answer_question_{question.id} - Ответить на вопрос
         """.strip()
 
-        # Отправляем уведомление всем службам поддержки
+        # Отправляем уведомление всем службам поддержки (с кнопкой подтверждения)
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        ack_keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Прочитал", callback_data="acknowledge")]
+            ]
+        )
+
         for support_id in SUPPORT_IDS:
             try:
                 await bot.send_message(
-                    chat_id=support_id, text=support_message, parse_mode="HTML"
+                    chat_id=support_id,
+                    text=support_message,
+                    parse_mode="HTML",
+                    reply_markup=ack_keyboard,
                 )
             except Exception as e:
                 logger.error(

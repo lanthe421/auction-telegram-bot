@@ -65,8 +65,28 @@ class NotificationService:
             finally:
                 db.close()
 
+            # Добавляем кнопку подтверждения чтения, которая запустит удаление через 5 минут
+            try:
+                ack_button = InlineKeyboardButton(
+                    text="✅ Прочитал (удалить через 5 минут)",
+                    callback_data="acknowledge",
+                )
+                if keyboard and getattr(keyboard, "inline_keyboard", None):
+                    combined_keyboard = InlineKeyboardMarkup(
+                        inline_keyboard=keyboard.inline_keyboard + [[ack_button]]
+                    )
+                else:
+                    combined_keyboard = InlineKeyboardMarkup(
+                        inline_keyboard=[[ack_button]]
+                    )
+            except Exception:
+                combined_keyboard = keyboard
+
             await self.bot.send_message(
-                chat_id=user_id, text=message, reply_markup=keyboard, parse_mode="HTML"
+                chat_id=user_id,
+                text=message,
+                reply_markup=combined_keyboard,
+                parse_mode="HTML",
             )
             logger.info(f"Уведомление отправлено пользователю {user_id}")
             return True
@@ -415,6 +435,31 @@ class NotificationService:
         finally:
             db.close()
 
+    async def notify_autobid_rejected(
+        self, lot_id: int, user_id: int, reason: str
+    ) -> None:
+        """Уведомляет пользователя об отклонении его автоставки"""
+        db = SessionLocal()
+        try:
+            lot = db.query(Lot).filter(Lot.id == lot_id).first()
+            if not lot:
+                return
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return
+            message = f"""
+🚫 <b>Автоставка отклонена</b>
+
+🏷️ {lot.title}
+❌ Причина: {reason}
+💰 Текущая цена лота: {lot.current_price:,.2f} ₽
+            """
+            await self.send_notification(user.telegram_id, message.strip())
+        except Exception as e:
+            logger.error(f"Ошибка при уведомлении об отклонении автоставки: {e}")
+        finally:
+            db.close()
+
     async def notify_purchase_started(self, lot_id: int, buyer_id: int) -> None:
         """Уведомляет продавца, что покупатель начал оплату"""
         db = SessionLocal()
@@ -734,10 +779,13 @@ async def notify_answered_support_questions(bot):
             for q in questions:
                 user = db.query(User).filter(User.id == q.user_id).first()
                 if user and user.telegram_id:
-                    text = f"📞 Ответ на ваш вопрос #{q.id}\n\n{q.answer}\n\n---\n💬 Для нового вопроса используйте /support"
+                    text = (
+                        f"📞 <b>Ответ на ваш вопрос #{q.id}</b>\n\n{q.answer}\n\n"
+                        f"💬 Для нового вопроса используйте /support"
+                    )
                     try:
-                        await bot.send_message(
-                            chat_id=user.telegram_id, text=text, parse_mode="Markdown"
+                        await notification_service.send_notification(
+                            user.telegram_id, text
                         )
                         q.notified = True
                         db.commit()

@@ -25,7 +25,7 @@ LOG_FILE = os.getenv("LOG_FILE", "bot.log")
 
 # Аукцион
 MIN_BID_INCREMENT = float(os.getenv("MIN_BID_INCREMENT", "1.0"))
-AUCTION_DURATION_HOURS = int(os.getenv("AUCTION_DURATION_HOURS", "168"))  # 7 дней
+AUCTION_DURATION_HOURS = int(os.getenv("AUCTION_DURATION_HOURS", "24"))  # 1 день
 COMMISSION_PERCENT = float(os.getenv("COMMISSION_PERCENT", "5.0"))  # 5%
 PENALTY_PERCENT = float(os.getenv("PENALTY_PERCENT", "5.0"))  # 5% штраф
 
@@ -37,12 +37,15 @@ SUPPORT_IDS = [
 SUPER_ADMIN_IDS = [
     int(x.strip()) for x in os.getenv("SUPER_ADMIN_IDS", "").split(",") if x.strip()
 ]
+MODERATOR_IDS = [
+    int(x.strip()) for x in os.getenv("MODERATOR_IDS", "").split(",") if x.strip()
+]
 
 # Автоставки
 AUTO_BID_MIN_BALANCE = float(
     os.getenv("AUTO_BID_MIN_BALANCE", "100.0")
 )  # Увеличено с 0.0
-AUTO_BID_MIN_PAYMENTS = int(os.getenv("AUTO_BID_MIN_PAYMENTS", "1"))  # Увеличено с 0
+AUTO_BID_MIN_PAYMENTS = int(os.getenv("AUTO_BID_MIN_PAYMENTS", "0"))  # Увеличено с 0
 
 # Уведомления
 NOTIFICATION_INTERVAL_MINUTES = int(

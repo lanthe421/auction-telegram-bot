@@ -1,0 +1,50 @@
+# Основные зависимости
+aiogram==3.4.1
+sqlalchemy==2.0.27
+python-dotenv==1.0.1
+
+# Платежи
+yookassa==3.0.0
+
+# Система управления (PyQt5)
+PyQt5==5.15.10
+
+# Дополнительные утилиты
+pillow==10.2.0
+python-dateutil==2.8.2
+pydantic==2.6.1
+loguru==0.7.2
+
+# Мониторинг и производительность
+psutil==5.9.8
+memory-profiler==0.61
+line-profiler==4.1.2
+
+# Кэширование и оптимизация
+redis==5.0.1
+cachetools==5.3.2
+
+# Django (опционально для веб-управления)
+django==5.0.2
+djangorestframework==3.15.0
+
+# Разработка и тестирование
+pytest==8.0.0
+pytest-asyncio==0.23.5
+pytest-cov==4.1.0
+black==24.1.1
+flake8==7.0.0
+mypy==1.8.0
+
+# Логирование и мониторинг
+structlog==24.1.0
+prometheus-client==0.19.0
+
+# Безопасность
+cryptography==42.0.2
+passlib==1.7.4
+
+# Утилиты для разработки
+click==8.1.7
+rich==13.7.0
+tqdm==4.66.1

@@ -150,9 +150,9 @@ MIT License - см. файл [LICENSE](LICENSE)
 
 ## 📞 Поддержка
 
-- 📧 Email: support@auction-bot.com
-- 💬 Telegram: @auction_bot_support
-- 🐛 Issues: [GitHub Issues](https://github.com/your-username/auction-bot/issues)
+- 📧 Email: lanthe421@gmail.com
+- 💬 Telegram: @artem_smirnov52
+- 🐛 Issues: [GitHub Issues](https://github.com/lanthe421/auction-telegram-bot/issues)
 
 ---
 

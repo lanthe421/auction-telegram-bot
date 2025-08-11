@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from bot.utils.bid_calculator import calculate_min_bid
@@ -53,7 +53,7 @@ class AutoBidManager:
 
             if existing_auto_bid:
                 existing_auto_bid.target_amount = target_amount
-                existing_auto_bid.updated_at = datetime.utcnow()
+                existing_auto_bid.updated_at = datetime.now(timezone.utc)
                 logger.info(
                     f"Обновлена автоставка пользователя {user_id} на лот {lot_id}: {target_amount}₽"
                 )

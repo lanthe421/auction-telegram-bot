@@ -16,7 +16,7 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
             KeyboardButton(text="👤 Личный кабинет"),
             KeyboardButton(text="💳 Мой баланс"),
         ],
-        [KeyboardButton(text="📋 История торгов"), KeyboardButton(text="📞 Поддержка")],
+        [KeyboardButton(text="📋 История торгов")],
         [KeyboardButton(text="⚙️ Настройки")],
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)

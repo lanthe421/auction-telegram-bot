@@ -23,7 +23,6 @@
 
 - 🔧 Полная панель управления
 - 👥 Модерация пользователей и лотов
-- 📊 Мониторинг производительности
 - 🛡️ Система безопасности и блокировок
 
 ## 🏗️ Архитектура
@@ -164,14 +163,6 @@ MIT License - см. файл [LICENSE](LICENSE)
 - 📧 Email: support@auction-bot.com
 - 💬 Telegram: @auction_bot_support
 - 🐛 Issues: [GitHub Issues](https://github.com/your-username/auction-bot/issues)
-
-## 🗺️ Roadmap
-
-- [ ] Интеграция с криптоплатежами
-- [ ] Мобильное приложение
-- [ ] AI для оценки лотов
-- [ ] Мультиязычность
-- [ ] API для внешних интеграций
 
 ---
 

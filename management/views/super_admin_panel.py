@@ -560,9 +560,13 @@ class SuperAdminPanel(QWidget):
             else:
                 start_time = None
             if start_time:
-                from datetime import datetime
+                from datetime import datetime, timezone
 
-                days = (datetime.utcnow() - start_time).days
+                # Ensure start_time is timezone-aware
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
+
+                days = (datetime.now(timezone.utc) - start_time).days
                 system_uptime = f"{days} дней"
             else:
                 system_uptime = "0 дней"

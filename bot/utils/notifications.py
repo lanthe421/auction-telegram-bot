@@ -363,12 +363,16 @@ class NotificationService:
         db = SessionLocal()
         try:
             now = get_moscow_time()
+            # Ensure timezone consistency
+            import pytz
+
+            now_utc = now.astimezone(pytz.UTC)
             ending_soon = (
                 db.query(Lot)
                 .filter(
                     Lot.status == LotStatus.ACTIVE,
-                    Lot.end_time > now.replace(tzinfo=None),
-                    Lot.end_time <= (now + timedelta(hours=1)).replace(tzinfo=None),
+                    Lot.end_time > now_utc,
+                    Lot.end_time <= now_utc + timedelta(hours=1),
                 )
                 .all()
             )

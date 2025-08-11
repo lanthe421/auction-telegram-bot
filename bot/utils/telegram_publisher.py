@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from aiogram import Bot
@@ -284,7 +284,9 @@ class TelegramPublisher:
         status = getattr(lot, "status", None)
         end_time = getattr(lot, "end_time", None)
         is_active = (
-            status == LotStatus.ACTIVE and end_time and end_time > datetime.utcnow()
+            status == LotStatus.ACTIVE
+            and end_time
+            and end_time > datetime.now(timezone.utc)
         )
 
         images_text = ""

@@ -47,7 +47,12 @@ def is_lot_ended(lot_end_time: datetime) -> bool:
     """Проверяет, закончился ли лот"""
     if not lot_end_time:
         return False
-    now = get_moscow_time().replace(tzinfo=None)
+
+    # Ensure both times are timezone-aware
+    now = get_moscow_time()
+    if lot_end_time.tzinfo is None:
+        lot_end_time = lot_end_time.replace(tzinfo=pytz.UTC)
+
     return lot_end_time <= now
 
 
@@ -55,7 +60,12 @@ def get_time_until_end(lot_end_time: datetime) -> Optional[timedelta]:
     """Возвращает время до окончания лота"""
     if not lot_end_time:
         return None
-    now = get_moscow_time().replace(tzinfo=None)
+
+    # Ensure both times are timezone-aware
+    now = get_moscow_time()
+    if lot_end_time.tzinfo is None:
+        lot_end_time = lot_end_time.replace(tzinfo=pytz.UTC)
+
     return lot_end_time - now
 
 
@@ -67,7 +77,11 @@ def should_extend_auction(lot_end_time: datetime) -> bool:
     if not lot_end_time:
         return False
 
-    now = get_moscow_time().replace(tzinfo=None)
+    # Ensure both times are timezone-aware
+    now = get_moscow_time()
+    if lot_end_time.tzinfo is None:
+        lot_end_time = lot_end_time.replace(tzinfo=pytz.UTC)
+
     time_left = lot_end_time - now
 
     # Проверяем, что аукцион еще не закончился и осталось меньше порогового времени

@@ -3,7 +3,7 @@
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QPixmap
@@ -1149,7 +1149,7 @@ class ModerationPanel(QWidget):
         try:
             lot = db.query(Lot).filter(Lot.id == lot_id).first()
             if lot:
-                current_time = datetime.now()
+                current_time = datetime.now(timezone.utc)
 
                 # Если это немедленный запуск (start_time = None), устанавливаем время
                 if lot.start_time is None:
@@ -1161,10 +1161,14 @@ class ModerationPanel(QWidget):
                 # Всегда активируем лот при одобрении
                 lot.status = LotStatus.ACTIVE
                 lot.approved_by = self.main_window.get_current_user()["name"]
-                lot.approved_at = datetime.utcnow()
+                lot.approved_at = datetime.now(timezone.utc)
                 db.commit()
 
                 # Проверяем, нужно ли публиковать сейчас или планировать на будущее
+                # Ensure lot.start_time is timezone-aware for comparison
+                if lot.start_time and lot.start_time.tzinfo is None:
+                    lot.start_time = lot.start_time.replace(tzinfo=timezone.utc)
+
                 if lot.start_time <= current_time:
                     # Время старта уже наступило или немедленный запуск - публикуем сразу
                     from management.core.telegram_publisher_sync import (
@@ -1408,7 +1412,7 @@ class ModerationPanel(QWidget):
                     db.query(Lot).filter(Lot.status == LotStatus.PENDING).all()
                 )
                 approved_count = 0
-                current_time = datetime.now()
+                current_time = datetime.now(timezone.utc)
 
                 for lot in pending_lots:
                     # Если это немедленный запуск (start_time = None), устанавливаем время
@@ -1418,13 +1422,17 @@ class ModerationPanel(QWidget):
 
                     lot.status = LotStatus.ACTIVE
                     lot.approved_by = self.main_window.get_current_user()["name"]
-                    lot.approved_at = datetime.utcnow()
+                    lot.approved_at = datetime.now(timezone.utc)
                     approved_count += 1
 
                 db.commit()
 
                 # Планируем публикацию для лотов с будущим временем старта
                 for lot in pending_lots:
+                    # Ensure lot.start_time is timezone-aware for comparison
+                    if lot.start_time and lot.start_time.tzinfo is None:
+                        lot.start_time = lot.start_time.replace(tzinfo=timezone.utc)
+
                     if lot.start_time is None:
                         # Немедленный запуск - публикуем сразу
                         from management.core.telegram_publisher_sync import (

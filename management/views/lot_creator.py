@@ -313,6 +313,11 @@ class LotCreator(QWidget):
             start_time = self.start_time_edit.time().toPyTime()
             start_datetime = datetime.combine(start_date, start_time)
 
+            # Make timezone-aware
+            from datetime import timezone
+
+            start_datetime = start_datetime.replace(tzinfo=timezone.utc)
+
             # Создаем дату окончания
             end_datetime = start_datetime + timedelta(days=self.duration_spin.value())
 

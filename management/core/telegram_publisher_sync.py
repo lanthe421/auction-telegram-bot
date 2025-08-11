@@ -311,17 +311,31 @@ class TelegramPublisherSync:
 
     def create_lot_message(self, lot: Lot, seller_name: str) -> str:
         """Создает текст сообщения для лота"""
-        # Форматируем время
-        start_time = (
-            lot.start_time.strftime("%d.%m.%Y в %H:%M")
-            if lot.start_time
-            else "Немедленно"
-        )
-        end_time = (
-            lot.end_time.strftime("%d.%m.%Y в %H:%M")
-            if lot.end_time
-            else "Не определено"
-        )
+        # Форматируем время по МСК
+        try:
+            from bot.utils.time_utils import utc_to_moscow
+
+            start_time = (
+                utc_to_moscow(lot.start_time).strftime("%d.%m.%Y в %H:%M")
+                if lot.start_time
+                else "Немедленно"
+            )
+            end_time = (
+                utc_to_moscow(lot.end_time).strftime("%d.%m.%Y в %H:%M")
+                if lot.end_time
+                else "Не определено"
+            )
+        except Exception:
+            start_time = (
+                lot.start_time.strftime("%d.%m.%Y в %H:%M")
+                if lot.start_time
+                else "Немедленно"
+            )
+            end_time = (
+                lot.end_time.strftime("%d.%m.%Y в %H:%M")
+                if lot.end_time
+                else "Не определено"
+            )
 
         # Определяем тип документа
         doc_type_text = {

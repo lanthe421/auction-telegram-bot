@@ -1,6 +1,6 @@
 import asyncio
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -80,8 +80,8 @@ def create_lot(db, price: float = 100.0):
         min_bid_increment=1.0,
         seller_id=seller.id,
         status=LotStatus.ACTIVE,
-        start_time=datetime.utcnow(),
-        end_time=datetime.utcnow() + timedelta(hours=1),
+        start_time=datetime.now(timezone.utc),
+        end_time=datetime.now(timezone.utc) + timedelta(hours=1),
     )
     db.add(lot)
     db.commit()

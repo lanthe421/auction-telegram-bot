@@ -1,5 +1,5 @@
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -57,8 +57,12 @@ class User(Base):
     auto_bid_enabled = Column(Boolean, default=False)
     max_bid_amount = Column(Float, nullable=True)  # Максимальная сумма для автоставок
     notifications_enabled = Column(Boolean, default=True)  # Включены ли уведомления
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     # Отношения
     lots = relationship("Lot", back_populates="seller", foreign_keys="Lot.seller_id")
@@ -97,8 +101,12 @@ class Lot(Base):
     # Время
     start_time = Column(DateTime, nullable=True)  # None для немедленного запуска
     end_time = Column(DateTime, nullable=True)  # None для немедленного запуска
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     # Модерация
     approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -132,7 +140,7 @@ class Bid(Base):
     bidder_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     amount = Column(Float, nullable=False)
     is_auto_bid = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Отношения
     lot = relationship("Lot", back_populates="bids", foreign_keys=[lot_id])
@@ -149,8 +157,12 @@ class AutoBid(Base):
     lot_id = Column(Integer, ForeignKey("lots.id"), nullable=False)
     target_amount = Column(Float, nullable=False)  # Целевая сумма автоставки
     is_active = Column(Boolean, default=True)  # Активна ли автоставка
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     # Отношения
     user = relationship("User", back_populates="auto_bids", foreign_keys=[user_id])
@@ -169,11 +181,12 @@ class Payment(Base):
     )  # "commission", "penalty", "deposit"
     status = Column(String(20), default="pending")  # pending, completed, failed
     transaction_id = Column(String(100), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
 
     # Отношения
     user = relationship("User", back_populates="payments", foreign_keys=[user_id])
+    lot = relationship("Lot", foreign_keys=[lot_id])
 
 
 class Document(Base):
@@ -184,7 +197,7 @@ class Document(Base):
     document_type = Column(Enum(DocumentType), nullable=False)
     content = Column(Text, nullable=False)  # Содержимое документа
     file_path = Column(String(500), nullable=True)  # Путь к файлу
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Отношения
     lot = relationship("Lot", back_populates="documents", foreign_keys=[lot_id])
@@ -204,7 +217,7 @@ class Complaint(Base):
     reviewed_at = Column(DateTime, nullable=True)
     resolution = Column(Text, nullable=True)
     is_resolved = Column(Boolean, default=False)  # Добавляем поле is_resolved
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Отношения
     complainant = relationship(
@@ -213,6 +226,7 @@ class Complaint(Base):
     )
     target_user = relationship("User", foreign_keys=[target_user_id])
     reviewer = relationship("User", foreign_keys=[reviewed_by])
+    lot = relationship("Lot", foreign_keys=[lot_id])
 
 
 class Notification(Base):
@@ -226,7 +240,7 @@ class Notification(Base):
         String(50), nullable=False
     )  # bid, auction_end, payment, etc.
     is_read = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Отношения
     user = relationship("User", foreign_keys=[user_id])
@@ -243,8 +257,12 @@ class SupportQuestion(Base):
     answered_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     answered_at = Column(DateTime, nullable=True)
     notified = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     # Отношения
     user = relationship("User", foreign_keys=[user_id])

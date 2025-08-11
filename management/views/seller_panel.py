@@ -35,7 +35,7 @@ from sqlalchemy.orm import joinedload
 
 from bot.utils.finance_manager import finance_manager
 from database.db import SessionLocal
-from database.models import Bid, DocumentType, Lot, LotStatus, User
+from database.models import AutoBid, Bid, DocumentType, Lot, LotStatus, User
 from management.utils.document_utils import (
     DocumentGenerator,
     ImageManager,
@@ -517,6 +517,19 @@ class EditLotDialog(QDialog):
             if self.immediate_start_radio.isChecked()
             else self.start_time_input.dateTime().toPyDateTime()
         )
+
+        # Конвертируем локальное (МСК) время в UTC корректно
+        if start_time is not None:
+            try:
+                from bot.utils.time_utils import moscow_to_utc
+
+                if start_time.tzinfo is None:
+                    start_time = moscow_to_utc(start_time)
+            except Exception:
+                if start_time.tzinfo is None:
+                    from datetime import timezone
+
+                    start_time = start_time.replace(tzinfo=timezone.utc)
 
         # Валидируем время старта
         start_time_errors = LotValidator.validate_start_time(start_time)
@@ -1058,6 +1071,17 @@ class SellerPanel(QWidget):
                 start_time = None  # Немедленный запуск после одобрения
             else:
                 start_time = self.start_time_input.dateTime().toPyDateTime()
+                # Конвертируем МСК -> UTC корректно
+                try:
+                    from bot.utils.time_utils import moscow_to_utc
+
+                    if start_time.tzinfo is None:
+                        start_time = moscow_to_utc(start_time)
+                except Exception:
+                    if start_time.tzinfo is None:
+                        from datetime import timezone
+
+                        start_time = start_time.replace(tzinfo=timezone.utc)
 
             # Валидируем данные
             lot_data = {
@@ -1713,10 +1737,6 @@ class SellerPanel(QWidget):
 
     def delete_active_lot(self, lot: Lot):
         """Удаление активного лота с уведомлением в Telegram"""
-        if lot.status != LotStatus.ACTIVE:
-            QMessageBox.warning(self, "Ошибка", "Можно удалять только активные лоты")
-            return
-
         reply = QMessageBox.question(
             self,
             "Подтверждение удаления",
@@ -1729,29 +1749,46 @@ class SellerPanel(QWidget):
             try:
                 db = SessionLocal()
                 try:
+                    # Перезагружаем лот в актуальной сессии
+                    db_lot = db.query(Lot).filter(Lot.id == lot.id).first()
+                    if not db_lot:
+                        QMessageBox.warning(self, "Ошибка", "Лот не найден")
+                        return
+
+                    if db_lot.status != LotStatus.ACTIVE:
+                        QMessageBox.warning(
+                            self, "Ошибка", "Можно удалять только активные лоты"
+                        )
+                        return
+
                     # Рассчитываем и списываем штраф 5% и зачисляем площадке
                     from bot.utils.finance_manager import finance_manager
 
-                    if not finance_manager.process_lot_deletion(lot.id, lot.seller_id):
+                    if not finance_manager.process_lot_deletion(
+                        db_lot.id, db_lot.seller_id
+                    ):
                         QMessageBox.critical(
                             self, "Ошибка", "Не удалось списать штраф 5% с продавца"
                         )
                         return
 
                     # Проверяем, есть ли ставки на лот
-                    bids_count = db.query(Bid).filter(Bid.lot_id == lot.id).count()
+                    bids_count = db.query(Bid).filter(Bid.lot_id == db_lot.id).count()
                     had_bids = bids_count > 0
 
                     # Удаляем все ставки на лот
-                    db.query(Bid).filter(Bid.lot_id == lot.id).delete()
+                    db.query(Bid).filter(Bid.lot_id == db_lot.id).delete()
+
+                    # Удаляем все автоставки на лот (во избежание NOT NULL constraints)
+                    db.query(AutoBid).filter(AutoBid.lot_id == db_lot.id).delete()
 
                     # Сохраняем информацию о лоте перед удалением
-                    lot_id = lot.id
-                    lot_title = lot.title
-                    telegram_message_id = lot.telegram_message_id
+                    lot_id = db_lot.id
+                    lot_title = db_lot.title
+                    telegram_message_id = db_lot.telegram_message_id
 
                     # Удаляем сам лот
-                    db.delete(lot)
+                    db.delete(db_lot)
                     db.commit()
 
                     # Редактируем или отправляем уведомление в Telegram канал
@@ -1801,7 +1838,7 @@ class SellerPanel(QWidget):
                     QMessageBox.information(
                         self,
                         "Успех",
-                        f"Лот '{lot.title}' удален! Штраф 5% списан.\n"
+                        f"Лот '{lot_title}' удален! Штраф 5% списан.\n"
                         f"Ставок на лот: {bids_count}\n"
                         "Уведомление отправлено в Telegram канал.",
                     )

@@ -5,7 +5,7 @@
 import asyncio
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Set
 
 from database.db import SessionLocal
@@ -48,9 +48,14 @@ class LotScheduler:
         if lot_id in self.scheduled_lots:
             self.scheduled_lots[lot_id].cancel()
 
-        # Вычисляем задержку до времени старта
-        now = datetime.now()
-        delay = (start_time - now).total_seconds()
+        # Вычисляем задержку до времени старта (нормализуем к UTC)
+        now = datetime.now(timezone.utc)
+        start_utc = start_time
+        if getattr(start_utc, "tzinfo", None) is None:
+            start_utc = start_utc.replace(tzinfo=timezone.utc)
+        else:
+            start_utc = start_utc.astimezone(timezone.utc)
+        delay = (start_utc - now).total_seconds()
 
         if delay <= 0:
             # Время уже наступило - публикуем сразу
@@ -62,7 +67,7 @@ class LotScheduler:
             self.scheduled_lots[lot_id] = timer
 
             logger.info(
-                f"Лот {lot_id} запланирован на публикацию в {start_time.strftime('%d.%m.%Y %H:%M')}"
+                f"Лот {lot_id} запланирован на публикацию в {start_utc.strftime('%d.%m.%Y %H:%M %Z')}"
             )
 
     def publish_lot(self, lot_id: int):
@@ -99,7 +104,7 @@ class LotScheduler:
         """Планирует публикацию всех одобренных лотов с будущим временем старта"""
         db = SessionLocal()
         try:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
             # Находим все активные лоты с будущим временем старта
             pending_lots = (

@@ -1,4 +1,6 @@
 import logging
+import time
+from collections import defaultdict
 from datetime import datetime
 
 from aiogram import F, Router
@@ -25,6 +27,9 @@ from management.core.telegram_publisher_sync import telegram_publisher_sync
 router = Router()
 logger = logging.getLogger(__name__)
 
+# Simple rate limiting for auto-bid setup to prevent duplicates
+auto_bid_setup_times = defaultdict(float)
+
 # Live-обновления убраны для улучшения производительности
 
 
@@ -49,6 +54,11 @@ async def check_user_banned_callback(callback: CallbackQuery) -> bool:
 @router.callback_query(F.data.startswith("auto_bid:"))
 @router.callback_query(F.data.startswith("change_auto_bid:"))
 async def handle_auto_bid(callback: CallbackQuery, state: FSMContext):
+    # Prevent duplicate processing by checking if user is already in auto-bid state
+    current_state = await state.get_state()
+    if current_state == BidStates.waiting_for_max_bid_amount:
+        await callback.answer("⏳ Вы уже вводите автоставку. Дождитесь завершения.")
+        return
     """Старт ввода суммы автоставки для конкретного лота."""
     # Блокировки
     if await check_user_banned_callback(callback):
@@ -94,15 +104,27 @@ async def handle_auto_bid(callback: CallbackQuery, state: FSMContext):
             else ""
         )
 
-        text = (
-            f"🤖 <b>Автоставка</b>\n\n"
-            f"🏷️ Лот: {lot.title}\n"
-            f"💰 Текущая цена: <b>{lot.current_price:,.2f} ₽</b>\n"
-            f"📈 Минимальная следующая ставка: <b>{min_bid_amount:,.2f} ₽</b>\n"
-            f"{leader_text}"
-            f"Введите сумму автоставки, до которой система будет автоматически повышать вашу ставку."
-            f"{existing_text}"
-        )
+        # If user already has an active auto-bid, show a different message
+        if existing_auto_bid:
+            text = (
+                f"🤖 <b>Изменение автоставки</b>\n\n"
+                f"🏷️ Лот: {lot.title}\n"
+                f"💰 Текущая цена: <b>{lot.current_price:,.2f} ₽</b>\n"
+                f"📈 Минимальная следующая ставка: <b>{min_bid_amount:,.2f} ₽</b>\n"
+                f"{leader_text}"
+                f"Введите новую сумму автоставки, до которой система будет автоматически повышать вашу ставку."
+                f"{existing_text}"
+            )
+        else:
+            text = (
+                f"🤖 <b>Автоставка</b>\n\n"
+                f"🏷️ Лот: {lot.title}\n"
+                f"💰 Текущая цена: <b>{lot.current_price:,.2f} ₽</b>\n"
+                f"📈 Минимальная следующая ставка: <b>{min_bid_amount:,.2f} ₽</b>\n"
+                f"{leader_text}"
+                f"Введите сумму автоставки, до которой система будет автоматически повышать вашу ставку."
+                f"{existing_text}"
+            )
 
         # Сохраняем состояние и ждем ввода суммы
         await state.update_data(lot_id=lot_id, message_id=callback.message.message_id)
@@ -852,18 +874,32 @@ async def process_auto_bid_amount(message: Message, state: FSMContext):
         ):
             leader_text = f"🥇 <b>Текущий лидер:</b> {check_result['current_leader_name']} ({check_result['current_leader_amount']:,.2f} ₽)\n"
 
+        # Rate limiting: prevent duplicate auto-bid setups within 5 seconds
+        user_key = f"{user.id}_{lot_id}"
+        current_time = time.time()
+        if current_time - auto_bid_setup_times[user_key] < 5:
+            await message.answer(
+                "⏳ Подождите немного перед повторной установкой автоставки."
+            )
+            return
+
         # Устанавливаем автоставку
         success = AutoBidManager.set_auto_bid(user.id, lot.id, target_amount)
 
         if success:
+            # Update rate limiting timestamp
+            auto_bid_setup_times[user_key] = current_time
+            # Prevent duplicate messages by checking if we already sent a success message
+            # Clear state immediately to prevent duplicate processing
+            await state.clear()
             # После установки — принудительно пересчитаем автоставки и обновим данные лота
             try:
                 AutoBidManager.recalculate_auto_bids_for_lot(lot.id)
             except Exception as e:
                 logger.error(f"Ошибка пересчета автоставок после установки: {e}")
 
-            # Обновляем объект лота и лидера из БД
-            db.refresh(lot)
+            # Обновляем объект лота и лидера из БД (получаем заново, т.к. пересчет может идти в другом контексте)
+            lot = db.query(Lot).filter(Lot.id == lot.id).first()
             leader_info_after = get_current_leader(db, lot.id)
             leader_text_after = ""
             if leader_info_after and leader_info_after[0]:
@@ -883,10 +919,17 @@ async def process_auto_bid_amount(message: Message, state: FSMContext):
                     f"🤖 <b>Автоставка установлена:</b> {target_amount:,.2f} ₽"
                 )
 
+            # Отображаем актуальную текущую цену: берем сумму лидирующей ставки, если есть; иначе поле лота
+            display_price = (
+                leader_info_after[1]
+                if leader_info_after and leader_info_after[1] is not None
+                else lot.current_price
+            )
+
             response_text = (
                 f"✅ <b>Автоставка успешно установлена!</b>\n\n"
                 f"📦 <b>Лот:</b> {lot.title}\n"
-                f"💰 <b>Текущая цена:</b> {lot.current_price:,.2f} ₽\n"
+                f"💰 <b>Текущая цена:</b> {display_price:,.2f} ₽\n"
                 f"{leader_text_after}"
                 f"{auto_bid_text}\n\n"
                 f"<i>Система будет автоматически повышать вашу ставку до указанной суммы при появлении новых ставок.</i>"
@@ -899,9 +942,8 @@ async def process_auto_bid_amount(message: Message, state: FSMContext):
             await message.answer(
                 "❌ Ошибка при установке автоставки. Попробуйте еще раз."
             )
-
-        # Очищаем состояние
-        await state.clear()
+            # Очищаем состояние в случае ошибки
+            await state.clear()
 
     except Exception as e:
         logger.error(f"Ошибка при обработке автоставки: {e}")

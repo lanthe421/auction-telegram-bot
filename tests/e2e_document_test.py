@@ -16,7 +16,7 @@ def run():
     lot = None
     tmp_file = None
     try:
-        now = get_moscow_time().replace(tzinfo=None)
+        now = get_moscow_time()
 
         # 1) Create seller and buyer
         # Создаем или переиспользуем пользователей с уникальными telegram_id

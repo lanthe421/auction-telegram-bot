@@ -218,6 +218,10 @@ class CacheManager:
 
         return stats
 
+    # Удобный алиас для внешнего использования
+    def get_all_cache_stats(self) -> Dict:
+        return self.get_all_stats()
+
     def start_cleanup(self, interval: int = 60):
         """Запускает очистку для всех кэшей"""
         self.default_cache.start_cleanup(interval)
@@ -277,6 +281,11 @@ def invalidate_cache_pattern(pattern: str, cache_name: str = "default"):
 def get_cache_stats(cache_name: str = "default") -> Dict:
     """Возвращает статистику кэша"""
     return cache_manager.get_cache(cache_name).get_stats()
+
+
+def get_all_cache_stats() -> Dict:
+    """Возвращает статистику всех кэшей (глобальная функция для внешнего импорта)"""
+    return cache_manager.get_all_stats()
 
 
 def start_cache_cleanup(interval: int = 60):

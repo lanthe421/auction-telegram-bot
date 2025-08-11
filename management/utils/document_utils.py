@@ -4,7 +4,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -14,15 +14,23 @@ logger = logging.getLogger(__name__)
 
 
 def format_local_time(dt):
-    """Форматирует время в локальном часовом поясе"""
+    """Форматирует время по МСК (Europe/Moscow)."""
     if dt is None:
         return "Не указано"
     try:
-        return dt.strftime("%d.%m.%Y %H:%M")
-    except Exception as e:
-        import logging
+        # Используем общую утилиту для приведения к МСК, если доступна
+        try:
+            from bot.utils.time_utils import utc_to_moscow
 
-        logger = logging.getLogger(__name__)
+            msk = utc_to_moscow(dt)
+            return msk.strftime("%d.%m.%Y %H:%M")
+        except Exception:
+            # Фолбэк: если tz отсутствует, считаем, что уже МСК
+            if getattr(dt, "tzinfo", None) is not None:
+                # Приводим к offset-naive строке, сохранив локальное время
+                return dt.astimezone().strftime("%d.%m.%Y %H:%M")
+            return dt.strftime("%d.%m.%Y %H:%M")
+    except Exception as e:
         logger.error(f"Ошибка при форматировании времени: {e}")
         return "Ошибка времени"
 
@@ -60,9 +68,9 @@ ID: {lot.id}
 Стартовая цена: {lot.starting_price:,.2f} ₽
 Текущая цена: {lot.current_price:,.2f} ₽
 Статус: {status_text}
-Время старта: {lot.start_time.strftime("%d.%m.%Y %H:%M") if lot.start_time else "Немедленно"}
-Время окончания: {lot.end_time.strftime("%d.%m.%Y %H:%M") if lot.end_time else "Не определено"}
-Создан: {lot.created_at.strftime("%d.%m.%Y %H:%M")}
+Время старта: {format_local_time(lot.start_time) if lot.start_time else "Немедленно"}
+Время окончания: {format_local_time(lot.end_time) if lot.end_time else "Не определено"}
+Создан: {format_local_time(lot.created_at)}
 
 """
 
@@ -88,7 +96,7 @@ ID: {lot.id}
                 content += f"\nПОСЛЕДНИЕ СТАВКИ\n"
                 content += f"================\n"
                 for i, bid in enumerate(recent_bids, 1):
-                    content += f"{i}. {bid.amount:,.2f} ₽ ({bid.created_at.strftime('%d.%m.%Y %H:%M')})\n"
+                    content += f"{i}. {bid.amount:,.2f} ₽ ({format_local_time(bid.created_at)})\n"
 
         return content
 
@@ -221,15 +229,15 @@ ID: {lot.id}
                 </tr>
                 <tr>
                     <td><strong>Время старта:</strong></td>
-                    <td>{lot.start_time.strftime("%d.%m.%Y %H:%M") if lot.start_time else "Немедленно"}</td>
+                    <td>{format_local_time(lot.start_time) if lot.start_time else "Немедленно"}</td>
                 </tr>
                 <tr>
                     <td><strong>Время окончания:</strong></td>
-                    <td>{lot.end_time.strftime("%d.%m.%Y %H:%M") if lot.end_time else "Не определено"}</td>
+                    <td>{format_local_time(lot.end_time) if lot.end_time else "Не определено"}</td>
                 </tr>
                 <tr>
                     <td><strong>Создан:</strong></td>
-                    <td>{lot.created_at.strftime("%d.%m.%Y %H:%M")}</td>
+                    <td>{format_local_time(lot.created_at)}</td>
                 </tr>
 """
 
@@ -284,7 +292,7 @@ ID: {lot.id}
                     <tr>
                         <td>{i}</td>
                         <td class="price">{bid.amount:,.2f} ₽</td>
-                        <td class="timestamp">{bid.created_at.strftime("%d.%m.%Y %H:%M")}</td>
+                        <td class="timestamp">{format_local_time(bid.created_at)}</td>
                     </tr>
 """
                 html += """
@@ -456,7 +464,11 @@ class LotValidator:
         # Проверка времени старта (если указано)
         start_time = data.get("start_time")
         if start_time is not None:  # Проверяем только если время указано
-            if start_time <= datetime.now():
+            now_utc = datetime.now(timezone.utc)
+            start_time_utc = start_time
+            if getattr(start_time_utc, "tzinfo", None) is None:
+                start_time_utc = start_time_utc.replace(tzinfo=timezone.utc)
+            if start_time_utc <= now_utc:
                 errors.append("Время старта должно быть в будущем")
 
         return errors
@@ -466,7 +478,11 @@ class LotValidator:
         """Проверяет корректность времени старта лота. Возвращает список ошибок."""
         errors = []
         if start_time is not None:
-            if start_time <= datetime.now():
+            now_utc = datetime.now(timezone.utc)
+            start_time_utc = start_time
+            if getattr(start_time_utc, "tzinfo", None) is None:
+                start_time_utc = start_time_utc.replace(tzinfo=timezone.utc)
+            if start_time_utc <= now_utc:
                 errors.append("Время старта должно быть в будущем")
         return errors
 
@@ -490,8 +506,13 @@ class LotValidator:
         if lot.start_time is None:
             return True
 
-        # Если время старта указано, проверяем что оно в будущем
-        if lot.start_time is not None and lot.start_time <= datetime.now():
-            return False
+        # Если время старта указано, проверяем что оно в будущем (UTC)
+        if lot.start_time is not None:
+            now_utc = datetime.now(timezone.utc)
+            lot_start_utc = lot.start_time
+            if getattr(lot_start_utc, "tzinfo", None) is None:
+                lot_start_utc = lot_start_utc.replace(tzinfo=timezone.utc)
+            if lot_start_utc <= now_utc:
+                return False
 
         return True

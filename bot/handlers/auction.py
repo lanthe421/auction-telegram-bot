@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -69,7 +69,7 @@ async def safe_edit_message(
             except Exception as cap_err:
                 if "message is not modified" in str(cap_err).lower():
                     return
-        logger.error(f"Ошибка при редактировании сообщения: {e}")
+        logger.error("Ошибка при редактировании сообщения: %s", e)
         # Если не удалось отредактировать, отправляем новое сообщение
         safe_text = text if text and str(text).strip() else "Сообщение обновлено"
         await callback.message.answer(
@@ -99,7 +99,7 @@ async def check_user_banned(user_id: int, message_or_callback) -> bool:
             return True
         return False
     except Exception as e:
-        logger.error(f"Ошибка при проверке блокировки пользователя: {e}")
+        logger.error("Ошибка при проверке блокировки пользователя: %s", e)
         return False
     finally:
         db.close()
@@ -196,7 +196,7 @@ async def cmd_start(message: Message, state: FSMContext):
         )
 
     except Exception as e:
-        logger.error(f"Ошибка при обработке команды start: {e}")
+        logger.error("Ошибка при обработке команды start: %s", e)
         await message.answer("❌ Произошла ошибка при запуске бота")
     finally:
         db.close()
@@ -218,10 +218,13 @@ async def show_lot_from_start(message: Message, lot_id: int):
         # Получаем количество ставок
         bids_count = len(lot.bids)
 
-        # Проверяем, активен ли лот
+        # Проверяем, активен ли лот (сравниваем в UTC) с нормализацией tz
+        now_utc = datetime.now(timezone.utc)
+        lot_end_utc = lot.end_time
+        if lot_end_utc is not None and lot_end_utc.tzinfo is None:
+            lot_end_utc = lot_end_utc.replace(tzinfo=timezone.utc)
         is_active = lot.status == LotStatus.ACTIVE and (
-            lot.end_time is None
-            or lot.end_time > get_moscow_time().replace(tzinfo=None)
+            lot_end_utc is None or lot_end_utc > now_utc
         )
         status = "🟢 Активен" if is_active else "🔴 Завершен"
 
@@ -232,6 +235,15 @@ async def show_lot_from_start(message: Message, lot_id: int):
         # Лидер
         leader_name, leader_amount = get_current_leader(db, lot.id)
 
+        # Форматируем время окончания по МСК для отображения
+        from bot.utils.time_utils import utc_to_moscow
+
+        end_time_text = (
+            utc_to_moscow(lot.end_time).strftime("%d.%m.%Y %H:%M")
+            if lot.end_time
+            else "Не указано"
+        )
+
         text = (
             f"🏷️ <b>{lot.title}</b>\n\n"
             f"📝 {lot.description or 'Описание отсутствует'}\n\n"
@@ -240,7 +252,7 @@ async def show_lot_from_start(message: Message, lot_id: int):
             f"🥇 Лидер: {leader_name}{f' ({leader_amount:,.2f}₽)' if leader_amount is not None and leader_name != '—' else ''}\n"
             f"👤 Продавец: {seller_name}\n"
             f"📊 Ставок: {bids_count}\n"
-            f"⏰ Завершение: {lot.end_time.strftime('%d.%m.%Y %H:%M') if lot.end_time else 'Не указано'}\n"
+            f"⏰ Завершение: {end_time_text}\n"
             f"📊 Статус: {status}"
         )
 
@@ -287,14 +299,14 @@ async def show_lot_from_start(message: Message, lot_id: int):
                     )
                     return
             except Exception as e:
-                logger.error(f"Ошибка при обработке изображений: {e}")
+                logger.error("Ошибка при обработке изображений: %s", e)
 
         await message.answer(
             text, reply_markup=get_auction_keyboard(lot.id), parse_mode="HTML"
         )
 
     except Exception as e:
-        logger.error(f"Ошибка при получении деталей лота: {e}")
+        logger.error("Ошибка при получении деталей лота: %s", e)
         await message.answer("❌ Произошла ошибка")
     finally:
         db.close()
@@ -319,15 +331,26 @@ async def _render_lot_details(callback: CallbackQuery, lot_id: int) -> None:
         seller_name = seller.first_name or seller.username or "Неизвестно"
 
         bids_count = len(lot.bids)
+        now_utc = datetime.now(timezone.utc)
+        lot_end_utc = lot.end_time
+        if lot_end_utc is not None and lot_end_utc.tzinfo is None:
+            lot_end_utc = lot_end_utc.replace(tzinfo=timezone.utc)
         is_active = lot.status == LotStatus.ACTIVE and (
-            lot.end_time is None
-            or lot.end_time > get_moscow_time().replace(tzinfo=None)
+            lot_end_utc is None or lot_end_utc > now_utc
         )
         status = "🟢 Активен" if is_active else "🔴 Завершен"
 
         min_bid_amount = calculate_min_bid(lot.current_price)
         min_increment = min_bid_amount - lot.current_price
         leader_name, leader_amount = get_current_leader(db, lot.id)
+
+        from bot.utils.time_utils import utc_to_moscow
+
+        end_time_text = (
+            utc_to_moscow(lot.end_time).strftime("%d.%m.%Y %H:%M")
+            if lot.end_time
+            else "Не указано"
+        )
 
         text = (
             f"🏷️ <b>{lot.title}</b>\n\n"
@@ -337,7 +360,7 @@ async def _render_lot_details(callback: CallbackQuery, lot_id: int) -> None:
             f"🥇 Лидер: {leader_name}{f' ({leader_amount:,.2f}₽)' if leader_amount is not None and leader_name != '—' else ''}\n"
             f"👤 Продавец: {seller_name}\n"
             f"📊 Ставок: {bids_count}\n"
-            f"⏰ Завершение: {lot.end_time.strftime('%d.%m.%Y %H:%M') if lot.end_time else 'Не указано'}\n"
+            f"⏰ Завершение: {end_time_text}\n"
             f"📊 Статус: {status}"
         )
 
@@ -367,7 +390,7 @@ async def _render_lot_details(callback: CallbackQuery, lot_id: int) -> None:
                                 )
                                 _sent_albums.add(cache_key)
                             except Exception as e:
-                                logger.error(f"Ошибка отправки альбома в боте: {e}")
+                                logger.error("Ошибка отправки альбома в боте: %s", e)
                     await safe_edit_message(
                         callback, text, reply_markup=get_auction_keyboard(lot.id)
                     )
@@ -385,14 +408,14 @@ async def _render_lot_details(callback: CallbackQuery, lot_id: int) -> None:
                     await callback.answer()
                     return
             except Exception as e:
-                logger.error(f"Ошибка при обработке изображений: {e}")
+                logger.error("Ошибка при обработке изображений: %s", e)
 
         await safe_edit_message(
             callback, text, reply_markup=get_auction_keyboard(lot.id)
         )
         await callback.answer()
     except Exception as e:
-        logger.error(f"Ошибка при получении деталей лота: {e}")
+        logger.error("Ошибка при получении деталей лота: %s", e)
         await callback.answer("❌ Произошла ошибка")
     finally:
         db.close()
@@ -403,13 +426,18 @@ async def show_lot_details(callback: CallbackQuery, state: FSMContext):
     """Показать детали лота"""
     # Очищаем состояние FSM, если пользователь был в процессе ввода ставки
     from bot.utils.fsm_utils import clear_bid_state_if_needed
+    from bot.utils.safe_parsers import safe_extract_lot_id
 
     if await clear_bid_state_if_needed(state):
         logger.info(
             f"Очищено состояние FSM для пользователя {callback.from_user.id} при открытии лота"
         )
 
-    lot_id = int(callback.data.split(":")[1])
+    lot_id = safe_extract_lot_id(callback.data)
+    if lot_id is None:
+        await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
+        return
+
     await _render_lot_details(callback, lot_id)
 
 
@@ -418,20 +446,30 @@ async def show_lot_details_from_back_button(callback: CallbackQuery, state: FSMC
     """Показать детали лота при нажатии кнопки 'Назад к лоту'"""
     # Очищаем состояние FSM, если пользователь был в процессе ввода ставки
     from bot.utils.fsm_utils import clear_bid_state_if_needed
+    from bot.utils.safe_parsers import safe_extract_lot_id
 
     if await clear_bid_state_if_needed(state):
         logger.info(
             f"Очищено состояние FSM для пользователя {callback.from_user.id} при нажатии 'Назад к лоту'"
         )
 
-    lot_id = int(callback.data.split(":")[1])
+    lot_id = safe_extract_lot_id(callback.data)
+    if lot_id is None:
+        await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
+        return
+
     await _render_lot_details(callback, lot_id)
 
 
 @router.callback_query(F.data.startswith("download_files:"))
 async def download_lot_files(callback: CallbackQuery):
     """Скачать файлы лота (если прикреплены в панели продавца)"""
-    lot_id = int(callback.data.split(":")[1])
+    from bot.utils.safe_parsers import safe_extract_lot_id
+
+    lot_id = safe_extract_lot_id(callback.data)
+    if lot_id is None:
+        await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
+        return
     db = next(get_db())
 
     try:
@@ -463,7 +501,7 @@ async def download_lot_files(callback: CallbackQuery):
                 await callback.message.answer_document(document=FSInputFile(file_path))
                 sent_any = True
             except Exception as e:
-                logger.error(f"Ошибка отправки файла {file_path}: {e}")
+                logger.error("Ошибка отправки файла %s: %s", file_path, e)
 
         if sent_any:
             await callback.answer("📁 Файлы отправлены")
@@ -471,7 +509,7 @@ async def download_lot_files(callback: CallbackQuery):
             await callback.answer("❌ Не удалось отправить файлы", show_alert=True)
 
     except Exception as e:
-        logger.error(f"Ошибка при скачивании файлов лота: {e}")
+        logger.error("Ошибка при скачивании файлов лота: %s", e)
         await callback.answer("❌ Произошла ошибка")
     finally:
         db.close()
@@ -480,7 +518,12 @@ async def download_lot_files(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("download_transfer_doc:"))
 async def download_transfer_document(callback: CallbackQuery):
     """Генерирует и отправляет документ передачи прав победителю"""
-    lot_id = int(callback.data.split(":")[1])
+    from bot.utils.safe_parsers import safe_extract_lot_id
+
+    lot_id = safe_extract_lot_id(callback.data)
+    if lot_id is None:
+        await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
+        return
     db = next(get_db())
     try:
         # Находим лот и проверяем победителя
@@ -538,7 +581,7 @@ async def download_transfer_document(callback: CallbackQuery):
             )
             await callback.answer("📄 Документ отправлен")
         except Exception as e:
-            logger.error(f"Ошибка при отправке документа: {e}")
+            logger.error("Ошибка при отправке документа: %s", e)
             await callback.answer("❌ Ошибка при отправке документа", show_alert=True)
         finally:
             # Удаляем временный файл
@@ -547,7 +590,7 @@ async def download_transfer_document(callback: CallbackQuery):
             except Exception:
                 pass
     except Exception as e:
-        logger.error(f"Ошибка при генерации документа передачи прав: {e}")
+        logger.error("Ошибка при генерации документа передачи прав: %s", e)
         await callback.answer("❌ Ошибка при генерации документа", show_alert=True)
     finally:
         db.close()
@@ -556,7 +599,12 @@ async def download_transfer_document(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("contact_seller:"))
 async def contact_seller(callback: CallbackQuery):
     """Связаться с продавцом"""
-    lot_id = int(callback.data.split(":")[1])
+    from bot.utils.safe_parsers import safe_extract_lot_id
+
+    lot_id = safe_extract_lot_id(callback.data)
+    if lot_id is None:
+        await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
+        return
     db = next(get_db())
 
     try:
@@ -623,7 +671,7 @@ async def contact_seller(callback: CallbackQuery):
             await callback.answer()
 
     except Exception as e:
-        logger.error(f"Ошибка при получении контактов продавца: {e}")
+        logger.error("Ошибка при получении контактов продавца: %s", e)
         await callback.answer("❌ Произошла ошибка", show_alert=True)
     finally:
         db.close()
@@ -632,9 +680,10 @@ async def contact_seller(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("time_remaining:"))
 async def time_remaining_colon(callback: CallbackQuery):
     """Показывает оставшееся время до окончания аукциона (всплывающее окно)."""
-    try:
-        lot_id = int(callback.data.split(":")[1])
-    except Exception:
+    from bot.utils.safe_parsers import safe_extract_lot_id
+
+    lot_id = safe_extract_lot_id(callback.data)
+    if lot_id is None:
         await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
         return
 
@@ -649,8 +698,12 @@ async def time_remaining_colon(callback: CallbackQuery):
             await callback.answer("⏰ Время окончания не указано", show_alert=True)
             return
 
-        now = get_moscow_time().replace(tzinfo=None)
-        remaining = lot.end_time - now
+        # Считаем оставшееся время в МСК
+        from bot.utils.time_utils import utc_to_moscow
+
+        now = get_moscow_time()
+        lot_end_msk = utc_to_moscow(lot.end_time)
+        remaining = lot_end_msk - now
         total_seconds = int(remaining.total_seconds())
         if total_seconds <= 0:
             await callback.answer("⏰ Аукцион завершен", show_alert=True)
@@ -665,11 +718,11 @@ async def time_remaining_colon(callback: CallbackQuery):
         if days:
             parts.append(f"{days} д")
         parts.append(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
-        end_str = lot.end_time.strftime("%d.%m.%Y %H:%M")
+        end_str = lot_end_msk.strftime("%d.%m.%Y %H:%M")
         text = f"⏰ До окончания: {' '.join(parts)}\n📅 Окончание: {end_str}"
         await callback.answer(text, show_alert=True)
     except Exception as e:
-        logger.error(f"Ошибка при обработке time_remaining: {e}")
+        logger.error("Ошибка при обработке time_remaining: %s", e)
         await callback.answer("❌ Ошибка", show_alert=True)
     finally:
         db.close()
@@ -678,9 +731,10 @@ async def time_remaining_colon(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("time_remaining_"))
 async def time_remaining_underscore(callback: CallbackQuery):
     """Совместимость с клавиатурами, где используется подчеркивание в callback_data."""
-    try:
-        lot_id = int(callback.data.split("_")[1])
-    except Exception:
+    from bot.utils.safe_parsers import safe_extract_id
+
+    lot_id = safe_extract_id(callback.data, "_", 1)
+    if lot_id is None:
         await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
         return
 
@@ -693,6 +747,25 @@ async def time_remaining_underscore(callback: CallbackQuery):
     )
 
 
+@router.callback_query(F.data.startswith("contact_seller_"))
+async def contact_seller_underscore(callback: CallbackQuery):
+    """Совместимость с клавиатурами с подчеркиванием в callback_data (contact_seller_)."""
+    from bot.utils.safe_parsers import safe_extract_id
+
+    lot_id = safe_extract_id(callback.data, "_", 1)
+    if lot_id is None:
+        await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
+        return
+
+    # Делегируем в основной обработчик
+    class Dummy:
+        data = f"contact_seller:{lot_id}"
+
+    await contact_seller(
+        CallbackQuery(model=callback.model_copy(update={"data": Dummy.data}))
+    )
+
+
 @router.callback_query(F.data.startswith("participate:"))
 async def participate_in_auction(callback: CallbackQuery):
     """Обработчик кнопки 'Участвовать'"""
@@ -700,7 +773,12 @@ async def participate_in_auction(callback: CallbackQuery):
     if await check_user_banned(callback.from_user.id, callback):
         return
 
-    lot_id = int(callback.data.split(":")[1])
+    from bot.utils.safe_parsers import safe_extract_lot_id
+
+    lot_id = safe_extract_lot_id(callback.data)
+    if lot_id is None:
+        await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
+        return
     db = next(get_db())
 
     try:
@@ -715,9 +793,12 @@ async def participate_in_auction(callback: CallbackQuery):
             return
 
         # Проверяем, активен ли лот
+        now_utc = datetime.now(timezone.utc)
+        lot_end_utc = lot.end_time
+        if lot_end_utc is not None and lot_end_utc.tzinfo is None:
+            lot_end_utc = lot_end_utc.replace(tzinfo=timezone.utc)
         if lot.status != LotStatus.ACTIVE or (
-            lot.end_time is not None
-            and lot.end_time <= get_moscow_time().replace(tzinfo=None)
+            lot_end_utc is not None and lot_end_utc <= now_utc
         ):
             await callback.answer("❌ Аукцион завершен")
             return
@@ -737,6 +818,14 @@ async def participate_in_auction(callback: CallbackQuery):
         min_bid_amount = calculate_min_bid(lot.current_price)
         min_increment = min_bid_amount - lot.current_price
 
+        from bot.utils.time_utils import utc_to_moscow
+
+        end_time_text = (
+            utc_to_moscow(lot.end_time).strftime("%d.%m.%Y %H:%M")
+            if lot.end_time
+            else "Не указано"
+        )
+
         text = f"""
 🎯 <b>УЧАСТИЕ В АУКЦИОНЕ</b>
 
@@ -753,7 +842,7 @@ async def participate_in_auction(callback: CallbackQuery):
 
 👤 <b>Продавец:</b> {seller_name}
 📊 <b>Ставок:</b> {bids_count}
-⏰ <b>Окончание:</b> {lot.end_time.strftime('%d.%m.%Y %H:%M') if lot.end_time else 'Не указано'}
+⏰ <b>Окончание:</b> {end_time_text}
 
 📍 <b>Геолокация:</b> {lot.location or 'Не указана'}
 🔗 <b>Ссылка на продавца:</b> {lot.seller_link or 'Не указана'}
@@ -768,7 +857,7 @@ async def participate_in_auction(callback: CallbackQuery):
         await callback.answer()
 
     except Exception as e:
-        logger.error(f"Ошибка при участии в аукционе: {e}")
+        logger.error("Ошибка при участии в аукционе: %s", e)
         await callback.answer("❌ Произошла ошибка")
     finally:
         db.close()
@@ -781,7 +870,13 @@ async def show_bid_options(callback: CallbackQuery):
     if await check_user_banned(callback.from_user.id, callback):
         return
 
-    lot_id = int(callback.data.split(":")[1])
+    from bot.utils.safe_parsers import safe_extract_lot_id
+
+    lot_id = safe_extract_lot_id(callback.data)
+    if lot_id is None:
+        await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
+        return
+
     db = next(get_db())
 
     try:
@@ -796,9 +891,12 @@ async def show_bid_options(callback: CallbackQuery):
             return
 
         # Проверяем, активен ли лот
+        now_utc = datetime.now(timezone.utc)
+        lot_end_utc = lot.end_time
+        if lot_end_utc is not None and lot_end_utc.tzinfo is None:
+            lot_end_utc = lot_end_utc.replace(tzinfo=timezone.utc)
         if lot.status != LotStatus.ACTIVE or (
-            lot.end_time is not None
-            and lot.end_time <= get_moscow_time().replace(tzinfo=None)
+            lot_end_utc is not None and lot_end_utc <= now_utc
         ):
             await callback.answer("❌ Аукцион завершен")
             return
@@ -829,7 +927,26 @@ async def show_bid_options(callback: CallbackQuery):
         # Live-обновления убраны для улучшения производительности
 
     except Exception as e:
-        logger.error(f"Ошибка при создании ставки: {e}")
+        logger.error("Ошибка при создании ставки: %s", e)
         await callback.answer("❌ Ошибка")
     finally:
         db.close()
+
+
+@router.callback_query(F.data.startswith("seller_contact:"))
+async def seller_contact_colon(callback: CallbackQuery):
+    """Совместимость с уведомлениями, использующими seller_contact:"""
+    from bot.utils.safe_parsers import safe_extract_lot_id
+
+    lot_id = safe_extract_lot_id(callback.data)
+    if lot_id is None:
+        await callback.answer("❌ Некорректный идентификатор лота", show_alert=True)
+        return
+
+    # Делегируем в основной обработчик contact_seller
+    class Dummy:
+        data = f"contact_seller:{lot_id}"
+
+    await contact_seller(
+        CallbackQuery(model=callback.model_copy(update={"data": Dummy.data}))
+    )

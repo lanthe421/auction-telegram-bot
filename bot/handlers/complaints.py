@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from aiogram import F, Router
@@ -394,7 +394,7 @@ async def resolve_complaint(callback: CallbackQuery):
         complaint.status = "resolved"
         complaint.is_resolved = True
         complaint.reviewed_by = callback.from_user.id
-        complaint.reviewed_at = datetime.utcnow()
+        complaint.reviewed_at = datetime.now(timezone.utc)
 
         db.commit()
 

@@ -5,7 +5,7 @@
 
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
@@ -431,7 +431,7 @@ class SupportPanel(QWidget):
             self.current_question.answered_by = (
                 current_user_db.id if current_user_db else None
             )
-            self.current_question.answered_at = datetime.utcnow()
+            self.current_question.answered_at = datetime.now(timezone.utc)
 
             db.commit()
 

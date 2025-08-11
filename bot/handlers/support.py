@@ -85,71 +85,8 @@ async def acknowledge_and_delete(callback: CallbackQuery):
 
 @router.message(Command("support"))
 async def support_command(message: Message, state: FSMContext):
-    """Обработчик команды /support"""
-    # Очищаем состояние FSM, если пользователь был в процессе ввода ставки
-    from bot.utils.fsm_utils import clear_bid_state_if_needed
-
-    if await clear_bid_state_if_needed(state):
-        logger.info(
-            f"Очищено состояние FSM для пользователя {message.from_user.id} при команде /support"
-        )
-
-    # Проверяем блокировку
-    if await check_user_banned(message.from_user.id, message):
-        return
-
-    # Регистрируем пользователя
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
-
-        if not user:
-            # Создаем нового пользователя
-            user = User(
-                telegram_id=message.from_user.id,
-                username=message.from_user.username,
-                first_name=message.from_user.first_name,
-                last_name=message.from_user.last_name,
-                role=UserRole.SELLER,
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            logger.info(f"Зарегистрирован новый пользователь: {user.telegram_id}")
-
-        # Проверяем, заблокирован ли пользователь
-        if user.is_banned:
-            await message.answer(
-                "❌ **Доступ запрещен!**\n\n"
-                "Ваш аккаунт заблокирован администратором.\n"
-                "Обратитесь к администратору для разблокировки.",
-                parse_mode="Markdown",
-            )
-            return
-
-        # Показываем меню поддержки
-        support_text = (
-            f"📞 <b>Служба поддержки</b>\n\n"
-            f"👋 Привет, {user.first_name}!\n\n"
-            f"🔧 Здесь вы можете:\n"
-            f"• Задать вопрос поддержке\n"
-            f"• Получить помощь по использованию бота\n"
-            f"• Сообщить о проблемах\n"
-            f"• Узнать правила аукциона\n\n"
-            f"Выберите действие:"
-        )
-
-        await message.answer(
-            support_text,
-            reply_markup=get_support_keyboard(),
-            parse_mode="HTML",
-        )
-
-    except Exception as e:
-        logger.error(f"Ошибка при обработке команды support: {e}")
-        await message.answer("❌ Произошла ошибка при открытии поддержки")
-    finally:
-        db.close()
+    """Отключено по требованию: возвращаем краткий ответ и не показываем меню поддержки."""
+    await message.answer("Служба поддержки временно недоступна.")
 
 
 @router.callback_query(F.data == "ask_support")

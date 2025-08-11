@@ -357,12 +357,9 @@ class FinanceManager:
                 p.amount for p in payments if p.payment_type == "penalty"
             )
 
+            # Для безопасности по умолчанию не показываем баланс, кроме супер-админов
             return {
-                "balance": (
-                    user.balance
-                    if user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]
-                    else 0
-                ),
+                "balance": (user.balance if user.role in [UserRole.SUPER_ADMIN] else 0),
                 "successful_payments": user.successful_payments,
                 "auto_bid_enabled": user.auto_bid_enabled,
                 "total_deposits": total_deposits,

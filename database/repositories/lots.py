@@ -72,16 +72,22 @@ class LotRepository:
         """Получает лоты по категории с кэшированием"""
         start_time = datetime.now()
         try:
-            lots = (
-                self.db.query(Lot)
-                .options(joinedload(Lot.seller))
-                .filter(Lot.category == category)
-                .filter(Lot.status == LotStatus.ACTIVE)
-                .filter(Lot.end_time > datetime.now())
-                .order_by(desc(Lot.created_at))
-                .limit(limit)
-                .all()
-            )
+            if hasattr(Lot, "category"):
+                lots = (
+                    self.db.query(Lot)
+                    .options(joinedload(Lot.seller))
+                    .filter(Lot.category == category)
+                    .filter(Lot.status == LotStatus.ACTIVE)
+                    .filter(Lot.end_time > datetime.now())
+                    .order_by(desc(Lot.created_at))
+                    .limit(limit)
+                    .all()
+                )
+            else:
+                logger.warning(
+                    "Поле 'category' отсутствует в модели Lot; возврат пустого списка"
+                )
+                lots = []
 
             execution_time = (datetime.now() - start_time).total_seconds() * 1000
             performance_monitor.record_database_query(execution_time)
@@ -96,6 +102,16 @@ class LotRepository:
         start_time = datetime.now()
         try:
             search_term = f"%{query}%"
+            text_filters = [
+                Lot.title.ilike(search_term),
+                Lot.description.ilike(search_term),
+            ]
+            if hasattr(Lot, "category"):
+                try:
+                    text_filters.append(Lot.category.ilike(search_term))
+                except Exception:
+                    pass
+
             lots = (
                 self.db.query(Lot)
                 .options(joinedload(Lot.seller))
@@ -103,11 +119,7 @@ class LotRepository:
                     and_(
                         Lot.status == LotStatus.ACTIVE,
                         Lot.end_time > datetime.now(),
-                        or_(
-                            Lot.title.ilike(search_term),
-                            Lot.description.ilike(search_term),
-                            Lot.category.ilike(search_term),
-                        ),
+                        or_(*text_filters),
                     )
                 )
                 .order_by(desc(Lot.created_at))

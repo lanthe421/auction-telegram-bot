@@ -5,7 +5,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -37,12 +37,17 @@ class NotificationService:
         self.processed_lots: Set[int] = set()
         # Кэш планировок напоминаний: (lot_id, label)
         self._scheduled_reminders: Set[Tuple[int, str]] = set()
+        # Карта последних сообщений по теме, чтобы редактировать, а не слать новые: (user_id, topic) -> (message_id, last_text)
+        self._user_topic_last: Dict[Tuple[int, str], Tuple[int, str]] = {}
 
     async def send_notification(
         self,
         user_id: int,
         message: str,
         keyboard: Optional[InlineKeyboardMarkup] = None,
+        *,
+        topic: Optional[str] = None,
+        silent: bool = True,
     ) -> bool:
         """
         Отправляет уведомление пользователю
@@ -82,12 +87,37 @@ class NotificationService:
             except Exception:
                 combined_keyboard = keyboard
 
-            await self.bot.send_message(
+            # Если задана тема — пробуем редактировать предыдущее сообщение, чтобы не засорять чат
+            if topic:
+                key = (user_id, topic)
+                prev = self._user_topic_last.get(key)
+                if prev and prev[0]:
+                    try:
+                        await self.bot.edit_message_text(
+                            chat_id=user_id,
+                            message_id=prev[0],
+                            text=message,
+                            reply_markup=combined_keyboard,
+                            parse_mode="HTML",
+                        )
+                        self._user_topic_last[key] = (prev[0], message)
+                        logger.info(
+                            f"Уведомление обновлено (topic={topic}) пользователю {user_id}"
+                        )
+                        return True
+                    except Exception:
+                        # Если редактирование не удалось (нет сообщения/другая ошибка) — отправим новое
+                        pass
+
+            sent = await self.bot.send_message(
                 chat_id=user_id,
                 text=message,
                 reply_markup=combined_keyboard,
                 parse_mode="HTML",
+                disable_notification=silent,
             )
+            if topic:
+                self._user_topic_last[(user_id, topic)] = (sent.message_id, message)
             logger.info(f"Уведомление отправлено пользователю {user_id}")
             return True
         except Exception as e:
@@ -113,7 +143,7 @@ class NotificationService:
             if not lot:
                 return
 
-            # Уведомляем продавца
+            # Уведомляем продавца (обновляем одно сообщение по теме, без звука)
             seller = db.query(User).filter(User.id == lot.seller_id).first()
             if seller:
                 message = f"""
@@ -124,26 +154,14 @@ class NotificationService:
 👤 Ставщик: {bidder_name}
 📅 Время: {datetime.now().strftime('%H:%M')}
                 """
-                await self.send_notification(seller.telegram_id, message.strip())
+                await self.send_notification(
+                    seller.telegram_id,
+                    message.strip(),
+                    topic=f"lot:{lot_id}:seller_updates",
+                    silent=True,
+                )
 
-            # Уведомляем других участников аукциона
-            participants = (
-                db.query(Bid).filter(Bid.lot_id == lot_id).distinct(Bid.bidder_id).all()
-            )
-            for bid in participants:
-                if bid.bidder_id != lot.seller_id:  # Не уведомляем продавца дважды
-                    bidder = db.query(User).filter(User.id == bid.bidder_id).first()
-                    if bidder:
-                        message = f"""
-⚡ <b>Новая ставка на лоте!</b>
-
-🏷️ {lot.title}
-💰 Текущая цена: {bid_amount:,.2f} ₽
-⏰ Успейте сделать ставку!
-                        """
-                        await self.send_notification(
-                            bidder.telegram_id, message.strip()
-                        )
+            # Больше не уведомляем всех участников о каждой новой ставке, чтобы не засорять чат
 
         except Exception as e:
             logger.error(f"Ошибка при уведомлении о новой ставке: {e}")
@@ -429,7 +447,12 @@ class NotificationService:
 💰 Новая текущая цена: {new_price:,.2f} ₽
 ➡️ Попробуйте повысить ставку, чтобы вернуть лидерство
             """
-            await self.send_notification(user.telegram_id, message.strip())
+            await self.send_notification(
+                user.telegram_id,
+                message.strip(),
+                topic=f"lot:{lot_id}:outbid",
+                silent=True,
+            )
         except Exception as e:
             logger.error(f"Ошибка при уведомлении о перебитой ставке: {e}")
         finally:

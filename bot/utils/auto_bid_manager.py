@@ -72,12 +72,12 @@ class AutoBidManager:
             db.commit()
 
             # Синхронизация текущей цены с реальным лидером (если отличается)
-                current_leader_bid = (
-                    db.query(Bid)
-                    .filter(Bid.lot_id == lot.id)
-                    .order_by(Bid.amount.desc())
-                    .first()
-                )
+            current_leader_bid = (
+                db.query(Bid)
+                .filter(Bid.lot_id == lot.id)
+                .order_by(Bid.amount.desc())
+                .first()
+            )
             if current_leader_bid and current_leader_bid.amount != lot.current_price:
                 old_price = lot.current_price
                 lot.current_price = current_leader_bid.amount
@@ -107,13 +107,13 @@ class AutoBidManager:
                     AutoBid.lot_id == lot_id,
                     AutoBid.is_active == True,
                 )
-                        .first()
-                    )
+                .first()
+            )
 
             if auto_bid:
                 auto_bid.is_active = False
                 db.commit()
-                            logger.info(
+                logger.info(
                     f"Удалена автоставка пользователя {user_id} на лот {lot_id}"
                 )
                 return True
@@ -141,8 +141,8 @@ class AutoBidManager:
                     AutoBid.is_active == True,
                 )
                 .first()
-                                    )
-                            except Exception as e:
+            )
+        except Exception as e:
             logger.error(f"Ошибка при получении автоставки: {e}")
             return None
         finally:
@@ -150,7 +150,7 @@ class AutoBidManager:
 
     @staticmethod
     def process_new_bid(lot_id: int, new_bid_amount: float, new_bidder_id: int) -> None:
-                            logger.info(
+        logger.info(
             f"Обработка новой ставки {new_bid_amount}₽ от пользователя {new_bidder_id} на лот {lot_id}"
         )
         # Для совместимости и корректной реакции автоставок после ручной ставки
@@ -163,7 +163,7 @@ class AutoBidManager:
         try:
             lot = db.query(Lot).filter(Lot.id == lot_id).first()
             if not lot or lot.status != LotStatus.ACTIVE:
-                            return
+                return
 
             auto_bids = (
                 db.query(AutoBid)
@@ -207,10 +207,10 @@ class AutoBidManager:
                 except Exception as e:
                     logger.error(f"Ошибка при обновлении сообщения в канале: {e}")
             else:
-                                    logger.info(
+                logger.info(
                     f"Канал не обновляется для лота {lot_id} (незначительное изменение цены: {old_price}₽ → {new_price}₽)"
-                                    )
-                            except Exception as e:
+                )
+        except Exception as e:
             logger.error(f"Ошибка при обработке автоставок для лота {lot_id}: {e}")
         finally:
             db.close()
@@ -223,7 +223,7 @@ class AutoBidManager:
         try:
             lot = db.query(Lot).filter(Lot.id == lot_id).first()
             if not lot:
-                            return
+                return
 
             # Если на лоте нет активных AutoBid, но есть пользователи с прежними автофлагами и авто-ставками,
             # создаём записи AutoBid на лету для совместимости.
@@ -291,34 +291,36 @@ class AutoBidManager:
             if auto_bid.target_amount <= live_current_price:
                 return False
 
-            # Максимальная автоставка среди других пользователей
-            max_other_auto_bid = (
-                db.query(AutoBid)
-                .filter(
-                    AutoBid.lot_id == lot.id,
-                    AutoBid.is_active == True,
-                    AutoBid.user_id != auto_bid.user_id,
-                )
-                .order_by(AutoBid.target_amount.desc())
-                .first()
-            )
-
-            if max_other_auto_bid:
-                # Новая цена = автоставка прошлого лидера + шаг
-                base_price = max_other_auto_bid.target_amount
-                required_bid = calculate_min_bid(base_price)
-
-                if auto_bid.target_amount < required_bid:
-                    return False
-                if live_current_price >= required_bid:
-                    return False
-                new_bid_amount = required_bid
+            # Определяем базовую цену для перебития
+            # Если лидер — автоставка другого пользователя, перебиваем её таргет + шаг
+            # Иначе (лидер ручной или лидера нет) — текущая цена + шаг
+            required_bid: float
+            if current_leader_bid and current_leader_bid.bidder_id != auto_bid.user_id:
+                if getattr(current_leader_bid, "is_auto_bid", False):
+                    # Найдем таргет автоставки текущего лидера
+                    leader_auto = (
+                        db.query(AutoBid)
+                        .filter(
+                            AutoBid.user_id == current_leader_bid.bidder_id,
+                            AutoBid.lot_id == lot.id,
+                            AutoBid.is_active == True,
+                        )
+                        .first()
+                    )
+                    if leader_auto and leader_auto.target_amount is not None:
+                        required_bid = calculate_min_bid(leader_auto.target_amount)
+                    else:
+                        required_bid = calculate_min_bid(live_current_price)
+                else:
+                    required_bid = calculate_min_bid(live_current_price)
             else:
-                # Если нет других автоставок — текущая цена + шаг
                 required_bid = calculate_min_bid(live_current_price)
-                if auto_bid.target_amount < required_bid:
-                    return False
-                new_bid_amount = required_bid
+
+            if auto_bid.target_amount < required_bid:
+                return False
+            if live_current_price >= required_bid:
+                return False
+            new_bid_amount = required_bid
 
             # Не создаем дубль той же суммы
             existing_bid = (
@@ -370,7 +372,7 @@ class AutoBidManager:
                     logger.error(f"Ошибка при уведомлении о продлении аукциона: {e}")
 
             if current_leader_bid and current_leader_bid.bidder_id != auto_bid.user_id:
-            try:
+                try:
                     import asyncio
 
                     asyncio.create_task(
@@ -378,7 +380,7 @@ class AutoBidManager:
                             lot.id, current_leader_bid.bidder_id, new_bid_amount
                         )
                     )
-            except Exception as e:
+                except Exception as e:
                     logger.error(f"Ошибка при уведомлении о перебитой ставке: {e}")
 
             return True
@@ -438,11 +440,11 @@ class AutoBidManager:
                 count += 1
 
             if count > 0:
-            db.commit()
+                db.commit()
                 logger.info(f"Очищено {count} автоставок на завершенных лотах")
 
             return count
-            except Exception as e:
+        except Exception as e:
             logger.error(f"Ошибка при очистке автоставок: {e}")
             db.rollback()
             return 0
@@ -492,7 +494,7 @@ class AutoBidManager:
                 db.query(AutoBid)
                 .filter(AutoBid.lot_id == lot.id, AutoBid.is_active == True)
                 .order_by(AutoBid.target_amount.desc())
-                    .first()
+                .first()
             )
 
             current_leader_bid = (
@@ -536,9 +538,9 @@ class AutoBidManager:
                     if max_auto_bid_user
                     else f"User{max_auto_bid.user_id}"
                 )
-                minimal_needed = max_auto_bid.target_amount + calculate_min_bid(
-                    max_auto_bid.target_amount
-                )
+                # Минимум для перебития = автоставка прошлого лидера + минимальный шаг
+                # calculate_min_bid(base) уже возвращает base + step
+                minimal_needed = calculate_min_bid(max_auto_bid.target_amount)
                 return {
                     "can_set": False,
                     "message": (

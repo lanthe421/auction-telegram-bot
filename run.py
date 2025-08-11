@@ -15,6 +15,13 @@ from threading import Thread
 # Добавляем корневую директорию в путь Python
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+# Безопасный вывод Unicode в Windows-консоли
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 from config.settings import get_project_root, validate_settings
 from management.utils.cache_manager import start_cache_cleanup, stop_cache_cleanup
 from management.utils.performance_monitor import (

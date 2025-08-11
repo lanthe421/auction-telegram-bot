@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime
 
@@ -46,6 +47,40 @@ async def check_user_banned(user_id: int, message_or_callback) -> bool:
 
 class SupportStates(StatesGroup):
     waiting_for_question = State()
+
+
+@router.callback_query(F.data == "acknowledge")
+async def acknowledge_and_delete(callback: CallbackQuery):
+    """Подтверждает прочтение и удаляет сообщение через 1 минуту."""
+    try:
+        await callback.answer("Удалю через 1 минуту")
+
+        chat_id = callback.message.chat.id if callback.message else None
+        message_id = callback.message.message_id if callback.message else None
+
+        # Убираем клавиатуру, чтобы не жали повторно
+        if callback.message:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+        if chat_id and message_id:
+
+            async def _del():
+                await asyncio.sleep(60)
+                try:
+                    from bot.main import bot
+
+                    await bot.delete_message(chat_id, message_id)
+                except Exception as e:
+                    logger.debug(
+                        f"Не удалось удалить сообщение {message_id} в {chat_id}: {e}"
+                    )
+
+            asyncio.create_task(_del())
+    except Exception as e:
+        logger.error(f"Ошибка acknowledge: {e}")
 
 
 @router.message(Command("support"))

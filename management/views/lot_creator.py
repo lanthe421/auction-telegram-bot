@@ -457,6 +457,21 @@ class LotCreator(QWidget):
             )
             return False
 
+        # Валидация ссылки на продавца: допускаем пусто или https://t.me/<username>
+        seller_username = (self.seller_username_edit.text() or "").strip()
+        if seller_username:
+            # Уберем пробелы/служебные и сформируем валидную ссылку
+            import re
+
+            cleaned = seller_username.lstrip("@ ")
+            # username: латиница/цифры/подчерк, 5-32 символов (как в Telegram)
+            if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", cleaned):
+                QMessageBox.warning(
+                    self,
+                    "Предупреждение",
+                    "Username продавца должен содержать 5-32 символов: латиница, цифры или подчёркивание",
+                )
+                return False
         return True
 
     def clear_form(self):

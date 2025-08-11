@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -348,6 +349,23 @@ class AuthWindow(QWidget):
         if telegram_id <= 0:
             QMessageBox.warning(self, "Ошибка", "Укажите корректный Telegram ID")
             return
+
+        # Валидация телефона: допускаем формат + и только цифры (E.164), длина 8-16
+        if phone:
+            normalized_phone = (
+                phone.replace(" ", "")
+                .replace("-", "")
+                .replace("(", "")
+                .replace(")", "")
+            )
+            if not re.fullmatch(r"^\+\d{8,16}$", normalized_phone):
+                QMessageBox.warning(
+                    self,
+                    "Ошибка",
+                    "Телефон должен быть в формате +<цифры>, без пробелов и символов (например: +79991234567)",
+                )
+                return
+            phone = normalized_phone
 
         db = SessionLocal()
         try:

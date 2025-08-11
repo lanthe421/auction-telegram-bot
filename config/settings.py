@@ -134,8 +134,8 @@ COMMISSION_PERCENT: float = _env_float("COMMISSION_PERCENT", 5.0)
 PENALTY_PERCENT: float = _env_float("PENALTY_PERCENT", 5.0)
 
 # Порог для автоставок (оставляем 0, чтобы автоставки были доступны всем)
-AUTO_BID_MIN_BALANCE: float = _env_float("AUTO_BID_MIN_BALANCE", 0.0)
-AUTO_BID_MIN_PAYMENTS: int = _env_int("AUTO_BID_MIN_PAYMENTS", 0)
+AUTO_BID_MIN_BALANCE: float = _env_float("AUTO_BID_MIN_BALANCE", 500)
+AUTO_BID_MIN_PAYMENTS: int = _env_int("AUTO_BID_MIN_PAYMENTS", 5)
 
 
 # ---------- Отладка ----------

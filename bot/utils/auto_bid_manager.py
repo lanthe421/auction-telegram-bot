@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from bot.utils.bid_calculator import calculate_min_bid
+from bot.utils.finance_manager import finance_manager
 from bot.utils.notifications import notification_service
 from bot.utils.time_utils import extend_auction_end_time, should_extend_auction
 from database.db import SessionLocal
@@ -23,6 +24,14 @@ class AutoBidManager:
 
             if not user or not lot:
                 logger.error(f"Пользователь {user_id} или лот {lot_id} не найден")
+                return False
+
+            # Проверка допуска к автоставкам
+            eligible, reason = finance_manager.check_auto_bid_eligibility(user)
+            if not eligible:
+                logger.warning(
+                    f"Пользователь {user_id} не допущен к автоставкам: {reason}"
+                )
                 return False
 
             if lot.status != LotStatus.ACTIVE:
@@ -470,6 +479,20 @@ class AutoBidManager:
                 return {
                     "can_set": False,
                     "message": "Пользователь или лот не найден",
+                    "current_leader_amount": 0,
+                    "current_leader_name": "",
+                }
+
+            # Проверяем право на автоставки
+            eligible, reason = finance_manager.check_auto_bid_eligibility(user)
+            if not eligible:
+                return {
+                    "can_set": False,
+                    "message": (
+                        f"Автоставки недоступны. "
+                        f"Требуется баланс ≥ {finance_manager.auto_bid_min_balance} ₽ "
+                        f"или успешных покупок ≥ {finance_manager.auto_bid_min_payments}."
+                    ),
                     "current_leader_amount": 0,
                     "current_leader_name": "",
                 }

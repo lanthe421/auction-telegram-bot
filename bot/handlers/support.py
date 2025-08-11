@@ -49,6 +49,18 @@ class SupportStates(StatesGroup):
     waiting_for_question = State()
 
 
+def has_support_permissions(user_id: int) -> bool:
+    """Право работы с поддержкой: модераторы и супер-админы"""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.telegram_id == user_id).first()
+        return bool(user and user.role in {UserRole.MODERATOR, UserRole.SUPER_ADMIN})
+    except Exception:
+        return False
+    finally:
+        db.close()
+
+
 @router.callback_query(F.data == "acknowledge")
 async def acknowledge_and_delete(callback: CallbackQuery):
     """Подтверждает прочтение и удаляет сообщение через 1 минуту."""
@@ -85,8 +97,29 @@ async def acknowledge_and_delete(callback: CallbackQuery):
 
 @router.message(Command("support"))
 async def support_command(message: Message, state: FSMContext):
-    """Отключено по требованию: возвращаем краткий ответ и не показываем меню поддержки."""
-    await message.answer("Служба поддержки временно недоступна.")
+    """/support — для пользователей: начать диалог с поддержкой (отвечают модераторы)."""
+    try:
+        await message.answer(
+            "📝 <b>Обращение в поддержку</b>\n\nОпишите ваш вопрос или проблему.",
+            parse_mode="HTML",
+        )
+        await state.set_state(SupportStates.waiting_for_question)
+    except Exception as e:
+        logger.error(f"Ошибка в /support: {e}")
+        await message.answer("❌ Ошибка поддержки. Попробуйте позже")
+
+
+@router.message(Command("support_panel"))
+async def support_panel(message: Message):
+    """Панель поддержки для модераторов и супер-админов"""
+    if not has_support_permissions(message.from_user.id):
+        await message.answer("❌ Доступ запрещен")
+        return
+    await message.answer(
+        "🆘 <b>Служба поддержки</b>\n\nВыберите раздел:",
+        reply_markup=get_support_keyboard(),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data == "ask_support")
@@ -169,7 +202,7 @@ async def notify_support_about_question(question: SupportQuestion, user: User):
 • /answer_question_{question.id} - Ответить на вопрос
         """.strip()
 
-        # Отправляем уведомление всем службам поддержки (с кнопкой подтверждения)
+        # Отправляем уведомление модераторам и супер-админам (с кнопкой подтверждения)
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         ack_keyboard = InlineKeyboardMarkup(
@@ -178,7 +211,22 @@ async def notify_support_about_question(question: SupportQuestion, user: User):
             ]
         )
 
-        for support_id in SUPPORT_IDS:
+        # Собираем получателей из БД; если не найдены — используем SUPPORT_IDS
+        db = SessionLocal()
+        try:
+            moderators = (
+                db.query(User)
+                .filter(User.role.in_([UserRole.MODERATOR, UserRole.SUPER_ADMIN]))
+                .all()
+            )
+            recipient_ids = {u.telegram_id for u in moderators if u.telegram_id}
+        finally:
+            db.close()
+
+        if not recipient_ids:
+            recipient_ids = set(SUPPORT_IDS)
+
+        for support_id in recipient_ids:
             try:
                 await bot.send_message(
                     chat_id=support_id,
@@ -201,7 +249,7 @@ async def notify_support_about_question(question: SupportQuestion, user: User):
 @router.callback_query(F.data == "pending_lots")
 async def show_pending_lots(callback: CallbackQuery):
     """Показывает лоты на модерации"""
-    if callback.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(callback.from_user.id):
         await callback.answer("Доступ запрещен")
         return
 
@@ -233,7 +281,7 @@ async def show_pending_lots(callback: CallbackQuery):
 @router.callback_query(F.data == "pending_complaints")
 async def show_pending_complaints(callback: CallbackQuery):
     """Показывает жалобы на рассмотрении"""
-    if callback.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(callback.from_user.id):
         await callback.answer("Доступ запрещен")
         return
 
@@ -283,7 +331,7 @@ async def reject_lot_handler(callback: CallbackQuery):
 @router.callback_query(F.data == "review_complaint")
 async def review_complaint_handler(callback: CallbackQuery):
     """Показывает жалобы для рассмотрения"""
-    if callback.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(callback.from_user.id):
         await callback.answer("Доступ запрещен")
         return
 
@@ -343,7 +391,7 @@ async def review_complaint_detail(callback: CallbackQuery):
     """Показывает детали жалобы для рассмотрения"""
     await callback.answer()
 
-    if callback.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(callback.from_user.id):
         await callback.answer("Доступ запрещен")
         return
 
@@ -421,7 +469,7 @@ async def resolve_complaint_handler(callback: CallbackQuery):
     """Разрешает жалобу"""
     await callback.answer()
 
-    if callback.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(callback.from_user.id):
         await callback.answer("Доступ запрещен")
         return
 
@@ -461,7 +509,7 @@ async def reject_complaint_handler(callback: CallbackQuery):
     """Отклоняет жалобу"""
     await callback.answer()
 
-    if callback.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(callback.from_user.id):
         await callback.answer("Доступ запрещен")
         return
 
@@ -501,7 +549,7 @@ async def strike_user_handler(callback: CallbackQuery):
     """Выдает страйк пользователю"""
     await callback.answer()
 
-    if callback.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(callback.from_user.id):
         await callback.answer("Доступ запрещен")
         return
 
@@ -552,7 +600,7 @@ async def back_to_support(callback: CallbackQuery):
 @router.message(Command("pending_questions"))
 async def show_pending_questions(message: Message):
     """Показывает вопросы в поддержку (только для службы поддержки)"""
-    if message.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(message.from_user.id):
         await message.answer("❌ Доступ запрещен")
         return
 
@@ -591,7 +639,7 @@ async def show_pending_questions(message: Message):
 @router.callback_query(F.data == "pending_questions")
 async def show_pending_questions_callback(callback: CallbackQuery):
     """Показывает вопросы в поддержку (только для службы поддержки)"""
-    if callback.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(callback.from_user.id):
         await callback.answer("Доступ запрещен")
         return
 
@@ -641,7 +689,7 @@ async def answer_question_handler(callback: CallbackQuery):
     """Показывает детали вопроса для ответа"""
     await callback.answer()
 
-    if callback.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(callback.from_user.id):
         await callback.answer("Доступ запрещен")
         return
 
@@ -703,7 +751,7 @@ async def answer_question_handler(callback: CallbackQuery):
 @router.message(Command("answer_question"))
 async def answer_question_command(message: Message):
     """Команда для ответа на вопрос (только для службы поддержки)"""
-    if message.from_user.id not in SUPPORT_IDS:
+    if not has_support_permissions(message.from_user.id):
         await message.answer("❌ Доступ запрещен")
         return
 

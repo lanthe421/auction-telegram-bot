@@ -22,7 +22,7 @@ from management.utils.performance_monitor import (
     stop_performance_monitoring,
 )
 
-from .handlers import admin, auction, bids, payments
+from .handlers import admin, auction, bids, complaints, payments, support, users
 
 # Настройка логирования
 setup_logging()
@@ -104,7 +104,11 @@ async def register_handlers():
     # Административные хендлеры
     dp.include_router(admin.router)
     dp.include_router(payments.router)
-    # Службу поддержки отключаем по требованию
+    # Пользовательские разделы
+    dp.include_router(users.router)
+    # Поддержка и жалобы
+    dp.include_router(support.router)
+    dp.include_router(complaints.router)
 
 
 async def main():

@@ -33,6 +33,7 @@ from sqlalchemy import func
 from config.settings import NOTIFICATION_INTERVAL_MINUTES
 from database.db import SessionLocal
 from database.models import Bid, Lot, LotStatus, Payment, User, UserRole
+from management.utils.telegram_validator import is_valid_telegram_id
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,13 @@ class UserEditDialog(QDialog):
 
         # Форма
         form_layout = QFormLayout()
+
+        # Telegram ID
+        self.telegram_id_input = QLineEdit()
+        if self.user and getattr(self.user, "telegram_id", None):
+            self.telegram_id_input.setText(str(self.user.telegram_id))
+        self.telegram_id_input.setPlaceholderText("Введите Telegram ID (число)")
+        form_layout.addRow("Telegram ID:", self.telegram_id_input)
 
         # Username
         self.username_input = QLineEdit()
@@ -140,8 +148,22 @@ class UserEditDialog(QDialog):
         """Возвращает данные пользователя из формы"""
         try:
             # Валидация
+            telegram_id_text = self.telegram_id_input.text().strip()
             username = self.username_input.text().strip()
             first_name = self.first_name_input.text().strip()
+
+            if not telegram_id_text:
+                QMessageBox.warning(self, "Ошибка", "Telegram ID обязателен")
+                return None
+
+            if not telegram_id_text.isdigit():
+                QMessageBox.warning(self, "Ошибка", "Telegram ID должен быть числом")
+                return None
+
+            telegram_id = int(telegram_id_text)
+            if not is_valid_telegram_id(telegram_id):
+                QMessageBox.warning(self, "Ошибка", "Указан некорректный Telegram ID")
+                return None
 
             if not username:
                 QMessageBox.warning(self, "Ошибка", "Username обязателен")
@@ -174,6 +196,7 @@ class UserEditDialog(QDialog):
             is_banned = self.banned_checkbox.currentText() == "Заблокирован"
 
             return {
+                "telegram_id": telegram_id,
                 "username": username,
                 "first_name": first_name,
                 "last_name": self.last_name_input.text().strip(),
@@ -1019,20 +1042,22 @@ class SuperAdminPanel(QWidget):
                 )
                 return
 
-            # Попытка определить telegram_id по username (если это id)
-            telegram_id = None
-            if re.fullmatch(r"\d{6,}", user_data["username"]):
-                telegram_id = int(user_data["username"])
-            # Если не удалось определить, оставить None
-            if telegram_id is None:
+            # Проверка уникальности Telegram ID
+            existing_by_tg = (
+                db.query(User)
+                .filter(User.telegram_id == user_data["telegram_id"])
+                .first()
+            )
+            if existing_by_tg:
                 QMessageBox.warning(
                     self,
-                    "Внимание",
-                    "Telegram ID не определён автоматически. После регистрации пользователь должен авторизоваться через Telegram бот, чтобы связать аккаунт.",
+                    "Ошибка",
+                    "Пользователь с таким Telegram ID уже существует",
                 )
+                return
 
             new_user = User(
-                telegram_id=telegram_id,
+                telegram_id=user_data["telegram_id"],
                 username=user_data["username"],
                 first_name=user_data["first_name"],
                 last_name=user_data.get("last_name", ""),
@@ -1075,7 +1100,24 @@ class SuperAdminPanel(QWidget):
                     )
                     return
 
+                # Проверяем, не занят ли Telegram ID другим пользователем
+                existing_by_tg = (
+                    db.query(User)
+                    .filter(
+                        User.telegram_id == user_data["telegram_id"], User.id != user_id
+                    )
+                    .first()
+                )
+                if existing_by_tg:
+                    QMessageBox.warning(
+                        self,
+                        "Ошибка",
+                        "Пользователь с таким Telegram ID уже существует",
+                    )
+                    return
+
                 # Обновляем данные
+                user.telegram_id = user_data["telegram_id"]
                 user.username = user_data["username"]
                 user.first_name = user_data["first_name"]
                 user.last_name = user_data.get("last_name", "")

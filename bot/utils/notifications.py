@@ -70,10 +70,10 @@ class NotificationService:
             finally:
                 db.close()
 
-            # Добавляем кнопку подтверждения чтения, которая запустит удаление через 5 минут
+            # Добавляем кнопку подтверждения чтения
             try:
                 ack_button = InlineKeyboardButton(
-                    text="✅ Прочитал (удалить через 5 минут)",
+                    text="✅ Ок",
                     callback_data="acknowledge",
                 )
                 if keyboard and getattr(keyboard, "inline_keyboard", None):
@@ -451,12 +451,8 @@ class NotificationService:
 💰 Новая текущая цена: {new_price:,.2f} ₽
 ➡️ Попробуйте повысить ставку, чтобы вернуть лидерство
             """
-            await self.send_notification(
-                user.telegram_id,
-                message.strip(),
-                topic=f"lot:{lot_id}:outbid",
-                silent=True,
-            )
+            # Отправляем КАЖДЫЙ раз новое уведомление (без topic)
+            await self.send_notification(user.telegram_id, message.strip(), silent=True)
         except Exception as e:
             logger.error(f"Ошибка при уведомлении о перебитой ставке: {e}")
         finally:
